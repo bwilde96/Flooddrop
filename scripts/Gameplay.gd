@@ -248,12 +248,7 @@ func _setup_ability_ui() -> void:
 	ability_progress.value = ability_cooldown_max
 	
 	var icon_path = "res://assets/icons/icon_%s.jpg" % active_ability
-	var icon_img = Image.new()
-	var err = icon_img.load(icon_path)
-	var icon_tex = null
-	if err == OK:
-		icon_tex = ImageTexture.create_from_image(icon_img)
-	
+	var icon_tex = load(icon_path)
 	if icon_tex != null:
 		var tex_rect = TextureRect.new()
 		tex_rect.texture = icon_tex

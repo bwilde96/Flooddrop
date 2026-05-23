@@ -1,11 +1,7 @@
 extends TextureRect
 
 func _ready() -> void:
-    var img = Image.new()
-    var err = img.load("res://assets/backgrounds/galaxy_bg.jpg")
-    if err == OK:
-        texture = ImageTexture.create_from_image(img)
-        
+    texture = load("res://assets/backgrounds/galaxy_bg.jpg")
     expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     set_anchors_preset(PRESET_FULL_RECT)
