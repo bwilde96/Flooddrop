@@ -7,7 +7,7 @@ func _ready() -> void:
     set_anchors_preset(PRESET_FULL_RECT)
     
     var img = Image.new()
-    var err = img.load("res://assets/backgrounds/slime_bg.png")
+    var err = img.load("res://assets/backgrounds/slime_bg.jpg")
     if err == OK:
         bg_tex = ImageTexture.create_from_image(img)
     
