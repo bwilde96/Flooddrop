@@ -136,6 +136,10 @@ func _ready() -> void:
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
 	
+	if has_node("Background"):
+		$Background.visible = false
+	BackgroundManager.update_background(levels[current_level_index].theme)
+	
 	freeze_timer = 0.0
 	shield_charges = 0
 	current_power_up_chance = power_up_spawn_chance_start
@@ -459,8 +463,7 @@ func _trigger_level_up() -> void:
 	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
 	
 	var bg_tween = create_tween()
-	bg_tween.tween_property($Background, "color", t.bg_color, 2.0)
-	
+	BackgroundManager.update_background(levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/bottom_color", t.flood_color, 2.0)
