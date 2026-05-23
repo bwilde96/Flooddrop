@@ -1,0 +1,242 @@
+[gd_scene load_steps=4 format=3 uid="uid://d2k1d9j8v4h3x"]
+
+[ext_resource type="Script" path="res://scripts/Gameplay.gd" id="1_game"]
+[ext_resource type="Shader" path="res://assets/flood_pool.gdshader" id="2_water"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
+shader = ExtResource("2_water")
+shader_parameter/wave_speed = 1.5
+shader_parameter/wave_freq = 5.0
+shader_parameter/wave_amp = 0.03
+shader_parameter/top_color = Color(0.35, 0.78, 0.98, 0.9)
+shader_parameter/bottom_color = Color(0.19, 0.38, 0.84, 0.95)
+shader_parameter/liquid_type = 0
+
+[node name="Gameplay" type="Node"]
+script = ExtResource("1_game")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(360, 640)
+
+[node name="Background" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 720.0
+offset_bottom = 1280.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.101961, 0.101961, 0.14902, 1)
+
+[node name="FloodRect" type="ColorRect" parent="."]
+material = SubResource("ShaderMaterial_water")
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 1280.0
+offset_right = 720.0
+offset_bottom = 1280.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+color = Color(0.188235, 0.380392, 0.843137, 0.8)
+
+[node name="DropContainer" type="Node2D" parent="."]
+
+[node name="HUD" type="CanvasLayer" parent="."]
+process_mode = 3
+
+[node name="GameUI" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="FreezeOverlay" type="ColorRect" parent="HUD/GameUI"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.678431, 0.847059, 0.901961, 0.2)
+mouse_filter = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="HUD/GameUI"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 100.0
+grow_horizontal = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 20
+
+[node name="HBox" type="HBoxContainer" parent="HUD/GameUI/MarginContainer"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="ScoreLabel" type="Label" parent="HUD/GameUI/MarginContainer/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 48
+text = "Score: 0"
+
+[node name="HighScoreLabel" type="Label" parent="HUD/GameUI/MarginContainer/HBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Best: 0"
+horizontal_alignment = 2
+
+[node name="PauseButtonContainer" type="MarginContainer" parent="HUD/GameUI"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -100.0
+offset_bottom = 100.0
+grow_horizontal = 0
+mouse_filter = 2
+theme_override_constants/margin_top = 120
+theme_override_constants/margin_right = 20
+
+[node name="PauseButton" type="Button" parent="HUD/GameUI/PauseButtonContainer"]
+custom_minimum_size = Vector2(80, 80)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "||"
+
+[node name="ShieldsContainer" type="HBoxContainer" parent="HUD/GameUI"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -60.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+alignment = 1
+mouse_filter = 2
+
+[node name="ShieldIcon" type="ColorRect" parent="HUD/GameUI/ShieldsContainer"]
+visible = false
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+mouse_filter = 2
+color = Color(0.7, 0.2, 0.9, 1)
+
+[node name="ShieldCountLabel" type="Label" parent="HUD/GameUI/ShieldsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Shields: 0"
+
+[node name="CenterContainer" type="CenterContainer" parent="HUD/GameUI"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="DangerLabel" type="Label" parent="HUD/GameUI/CenterContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0, 0, 1)
+theme_override_font_sizes/font_size = 48
+
+[node name="LevelUpLabel" type="Label" parent="HUD/GameUI/CenterContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 64
+text = "LEVEL 2 - LAVA"
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0)
+scale = Vector2(1.5, 1.5)
+
+[node name="DebugPanel" type="PanelContainer" parent="HUD"]
+visible = false
+offset_left = 20.0
+offset_top = 180.0
+offset_right = 260.0
+offset_bottom = 320.0
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="HUD/DebugPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+mouse_filter = 2
+
+[node name="DebugLabel" type="Label" parent="HUD/DebugPanel/Margin"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Debug Info"
+
+[node name="PauseMenu" type="Control" parent="HUD"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ColorRect" type="ColorRect" parent="HUD/PauseMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.784314)
+
+[node name="VBox" type="VBoxContainer" parent="HUD/PauseMenu"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -150.0
+offset_top = -150.0
+offset_right = 150.0
+offset_bottom = 150.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="HUD/PauseMenu/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "PAUSED"
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="HUD/PauseMenu/VBox"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "RESUME"
+
+[node name="RestartButton" type="Button" parent="HUD/PauseMenu/VBox"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "RESTART"
+
+[node name="MenuButton" type="Button" parent="HUD/PauseMenu/VBox"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "MAIN MENU"

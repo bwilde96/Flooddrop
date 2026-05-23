@@ -1,0 +1,34 @@
+[gd_scene load_steps=5 format=3 uid="uid://b8y1k5x9v2j4t"]
+
+[ext_resource type="Script" path="res://scripts/Drop.gd" id="1_drop"]
+[ext_resource type="Shader" path="res://assets/fluid_drop.gdshader" id="2_shader"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_fluid"]
+resource_local_to_scene = true
+shader = ExtResource("2_shader")
+shader_parameter/drop_y = 20.0
+shader_parameter/drop_radius = 32.0
+shader_parameter/water_color = Color(0.35, 0.78, 0.98, 1)
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_drop"]
+radius = 40.0
+
+[node name="Drop" type="Area2D"]
+script = ExtResource("1_drop")
+
+[node name="Visuals" type="Node2D" parent="."]
+show_behind_parent = true
+position = Vector2(0, -50)
+
+[node name="FluidRect" type="ColorRect" parent="Visuals"]
+material = SubResource("ShaderMaterial_fluid")
+mouse_filter = 2
+offset_left = -60.0
+offset_top = 0.0
+offset_right = 60.0
+offset_bottom = 200.0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_drop")
+
+[connection signal="input_event" from="." to="." method="_input_event"]
