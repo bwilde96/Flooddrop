@@ -22,6 +22,7 @@ SaveManager="*res://scripts/autoloads/SaveManager.gd"
 GameManager="*res://scripts/autoloads/GameManager.gd"
 AudioManager="*res://scripts/autoloads/AudioManager.gd"
 ThemeManager="*res://scripts/autoloads/ThemeManager.gd"
+BackgroundManager="*res://scenes/autoloads/BackgroundManager.tscn"
 
 [display]
 
