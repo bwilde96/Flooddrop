@@ -4,6 +4,7 @@ extends Control
 @onready var high_score_label: Label = $VBoxContainer/HighScoreLabel
 
 func _ready() -> void:
+	BackgroundManager.update_background(ThemeManager.get_equipped_theme_id())
 	get_tree().set_quit_on_go_back(true)
 	start_button.pressed.connect(_on_start_pressed)
 	var shop_btn = $VBoxContainer/ShopButton

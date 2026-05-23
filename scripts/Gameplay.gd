@@ -135,9 +135,6 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
-	
-	if has_node("Background"):
-		$Background.visible = false
 	BackgroundManager.update_background(levels[current_level_index].theme)
 	
 	freeze_timer = 0.0
@@ -279,7 +276,6 @@ func _setup_ability_ui() -> void:
 	
 	btn.pressed.connect(_use_ability)
 	var t = ThemeManager.get_equipped_theme()
-	$Background.color = t.get("bg_color", Color(0.10, 0.10, 0.15, 1.0))
 	flood_rect.material.set_shader_parameter("top_color", t.drop_color)
 	flood_rect.material.set_shader_parameter("bottom_color", t.flood_color)
 	flood_rect.material.set_shader_parameter("liquid_type", t.get("shader_type", 0))
