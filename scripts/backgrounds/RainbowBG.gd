@@ -1,24 +1,13 @@
-extends Control
+extends TextureRect
 
-var bg_tex : ImageTexture
+var bg_tex = load("res://assets/backgrounds/rainbow_bg.jpg")
 
 func _ready() -> void:
-    mouse_filter = Control.MOUSE_FILTER_IGNORE
+    texture = bg_tex
+    expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     set_anchors_preset(PRESET_FULL_RECT)
-    
-    var img = Image.new()
-    var err = img.load("res://assets/backgrounds/rainbow_bg.jpg")
-    if err == OK:
-        bg_tex = ImageTexture.create_from_image(img)
-    
-    var bg_rect = TextureRect.new()
-    if bg_tex:
-        bg_rect.texture = bg_tex
-    bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-    bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-    bg_rect.set_anchors_preset(PRESET_FULL_RECT)
-    bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    add_child(bg_rect)
+    mouse_filter = Control.MOUSE_FILTER_IGNORE
     
     var particles = CPUParticles2D.new()
     particles.position = Vector2(360, 1350)
