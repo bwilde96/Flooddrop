@@ -171,7 +171,11 @@ func _create_ability_item(a_id: String, info: Dictionary, is_unlocked: bool, is_
 	var preview = TextureRect.new()
 	preview.custom_minimum_size = Vector2(100, 100)
 	var icon_path = "res://assets/icons/icon_%s.jpg" % a_id
-	var icon_tex = load(icon_path)
+	var img = Image.new()
+	var err = img.load(icon_path)
+	var icon_tex = null
+	if err == OK:
+		icon_tex = ImageTexture.create_from_image(img)
 	if icon_tex != null:
 		preview.texture = icon_tex
 		preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
