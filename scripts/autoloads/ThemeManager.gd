@@ -14,7 +14,7 @@ const THEMES = {
 	"slime": {
 		"name": "Slime", "price": 500,
 		"drop_color": Color(0.4, 0.9, 0.2, 1.0), "flood_color": Color(0.2, 0.7, 0.1, 0.8), "bg_color": Color(0.05, 0.15, 0.05, 1.0),
-		"shader_type": 2, "speed_mult": 1.0, "form_mult": 1.0, "damage_mult": 1.0, "size_mult": 1.0, "score_mult": 1.0
+		"shader_type": 2, "speed_mult": 1.5, "form_mult": 1.0, "damage_mult": 1.0, "size_mult": 1.0, "score_mult": 1.0, "spawn_interval_mult": 1.8
 	},
 	"acid": {
 		"name": "Acid", "price": 750,

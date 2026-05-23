@@ -22,6 +22,7 @@ var type: DropType = DropType.NORMAL :
 		type = value
 		if is_inside_tree() and fluid_rect:
 			fluid_rect.material.set_shader_parameter("water_color", get_current_color())
+			_update_shader_liquid_type()
 		queue_redraw()
 var gameplay_ref: Node = null
 
@@ -79,10 +80,7 @@ func on_pool_activate(pool: Node) -> void:
 	
 	var current_color = get_current_color()
 	fluid_rect.material.set_shader_parameter("water_color", current_color)
-	if type == DropType.GOLD:
-		fluid_rect.material.set_shader_parameter("liquid_type", 6)
-	else:
-		fluid_rect.material.set_shader_parameter("liquid_type", theme_cache.get("shader_type", 0))
+	_update_shader_liquid_type()
 	
 	var size_m = theme_cache.get("size_mult", 1.0)
 	drop_radius = 40.0 * size_m
@@ -144,6 +142,8 @@ func _disconnect_all(sig: Signal) -> void:
 		sig.disconnect(c.callable)
 
 func _process(delta: float) -> void:
+	if type != DropType.NORMAL and type != DropType.GOLD:
+		queue_redraw()
 	if state != DropState.FALLING: return
 	
 	var multiplier = 1.0
@@ -178,13 +178,19 @@ func _process(delta: float) -> void:
 	visuals.scale = Vector2(1.0 + wobble_x, 1.0 + wobble_y)
 	
 	if position.y > screen_bottom:
-		if s_type == 2 and bounce_count == 0:
-			bounce_count = 1
+		if s_type == 2 and bounce_count < 3:
+			bounce_count += 1
 			position.y = screen_bottom - 10.0
+			
+			var bounce_height = 0.0
+			if bounce_count == 1: bounce_height = 800.0
+			elif bounce_count == 2: bounce_height = 500.0
+			elif bounce_count == 3: bounce_height = 200.0
+			
 			var bounce_tween = create_tween()
-			bounce_tween.tween_property(self, "position:y", screen_bottom - 500.0, 0.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-			bounce_tween.tween_property(self, "position:y", screen_bottom + 50.0, 0.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
-			missed.emit(flood_damage * 0.2) # Small penalty for bouncing
+			bounce_tween.tween_property(self, "position:y", screen_bottom - bounce_height, 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+			bounce_tween.tween_property(self, "position:y", screen_bottom + 50.0, 0.4).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+			missed.emit(flood_damage * 0.1) # Small penalty for bouncing
 		else:
 			var final_damage = flood_damage * theme_cache.get("damage_mult", 1.0)
 			missed.emit(final_damage)
@@ -198,6 +204,22 @@ func _input_event(_viewport: Viewport, event: InputEvent, _shape_idx: int) -> vo
 	if event is InputEventScreenTouch or event is InputEventMouseButton:
 		if event.is_pressed():
 			pop()
+
+func _update_shader_liquid_type() -> void:
+	if type == DropType.GOLD:
+		fluid_rect.material.set_shader_parameter("liquid_type", 6)
+	elif type == DropType.BOMB:
+		fluid_rect.material.set_shader_parameter("liquid_type", 8)
+	elif type == DropType.FREEZE:
+		fluid_rect.material.set_shader_parameter("liquid_type", 9)
+	elif type == DropType.SHIELD:
+		fluid_rect.material.set_shader_parameter("liquid_type", 10)
+	elif type == DropType.DRAIN:
+		fluid_rect.material.set_shader_parameter("liquid_type", 11)
+	else:
+		if theme_cache == null:
+			theme_cache = ThemeManager.get_equipped_theme()
+		fluid_rect.material.set_shader_parameter("liquid_type", theme_cache.get("shader_type", 0))
 
 func pop() -> void:
 	if state == DropState.POPPING or state == DropState.INACTIVE: return
@@ -241,32 +263,68 @@ func get_current_color() -> Color:
 	return col
 
 func _draw() -> void:
-	# Draw inner icons for readability
-	var icon_color = Color(1, 1, 1, 0.8) if type != DropType.FREEZE else Color(0.2, 0.4, 0.8, 0.8)
-	var size = drop_radius * 0.5
+	if type == DropType.NORMAL or type == DropType.GOLD: return
+	
+	# Do not draw the symbol until the drop detaches from the ceiling!
+	if state == DropState.FORMING: return
+	
+	var current_scale = visuals.scale.x
+	var size = drop_radius * 0.45 * current_scale
+	
+	var y_val = fluid_rect.material.get_shader_parameter("drop_y")
+	var visual_offset_y = 0.0
+	if y_val != null:
+		visual_offset_y = float(y_val) + visuals.position.y
+		
+	draw_set_transform(Vector2(0, visual_offset_y), 0.0, Vector2.ONE)
+	
+	var base_col = Color(1.0, 1.0, 1.0, 1.0)
+	match type:
+		DropType.DRAIN: base_col = Color(0.2, 1.0, 0.2, 1.0)
+		DropType.FREEZE: base_col = Color(0.5, 0.9, 1.0, 1.0)
+		DropType.BOMB: base_col = Color(1.0, 0.4, 0.1, 1.0)
+		DropType.SHIELD: base_col = Color(0.9, 0.4, 1.0, 1.0)
+		
+	var glow_col = base_col
+	
+	# Draw beautiful soft radial glow behind the symbol
+	var glow_radius = size * 2.5
+	for i in range(12, 0, -1):
+		var r = (i / 12.0) * glow_radius
+		var a = pow(1.0 - (i / 12.0), 2.5) * 0.2
+		draw_circle(Vector2.ZERO, r, Color(glow_col.r, glow_col.g, glow_col.b, a))
 	
 	match type:
 		DropType.DRAIN:
-			draw_line(Vector2(0, -size), Vector2(0, size), icon_color, 4.0)
-			draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), icon_color, 4.0)
-			draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), icon_color, 4.0)
+			base_col = Color(0.2, 1.0, 0.2, 1.0)
+			for w in [8.0, 4.0]:
+				var c = Color(0.1, 0.8, 0.1, 0.4) if w == 8.0 else base_col
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
+				draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
+				draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
 		DropType.FREEZE:
-			draw_line(Vector2(0, -size), Vector2(0, size), icon_color, 3.0)
-			draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), icon_color, 3.0)
-			draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), icon_color, 3.0)
+			base_col = Color(0.5, 0.9, 1.0, 1.0)
+			for w in [7.0, 3.0]:
+				var c = Color(0.2, 0.6, 1.0, 0.4) if w == 7.0 else base_col
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
+				draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), c, w * current_scale)
+				draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), c, w * current_scale)
 		DropType.BOMB:
-			draw_circle(Vector2.ZERO, size * 0.7, Color(1, 0.8, 0.2, 0.9))
-			draw_line(Vector2(0, -size*0.5), Vector2(size, -size*1.2), Color(0.2,0.2,0.2,1), 3.0)
+			base_col = Color(1.0, 0.4, 0.1, 1.0)
+			draw_circle(Vector2.ZERO, size * 0.5, base_col)
+			draw_line(Vector2(0, -size*0.5), Vector2(size*0.8, -size*1.2), Color(0.1, 0.1, 0.1, 1.0), 4.0 * current_scale)
+			draw_circle(Vector2(size*0.8, -size*1.2), size*0.3, Color(1.0, 0.8, 0.2, 1.0)) # Spark
 		DropType.SHIELD:
+			base_col = Color(0.9, 0.4, 1.0, 1.0)
 			var points = PackedVector2Array([
-				Vector2(-size, -size*0.8),
-				Vector2(size, -size*0.8),
-				Vector2(size, size*0.2),
-				Vector2(0, size*0.9),
-				Vector2(-size, size*0.2)
+				Vector2(-size, -size*0.8), Vector2(size, -size*0.8),
+				Vector2(size, size*0.2), Vector2(0, size*0.9), Vector2(-size, size*0.2)
 			])
-			draw_polygon(points, [icon_color])
+			draw_polygon(points, [base_col, base_col, base_col, base_col, base_col])
 		DropType.RAINBOW:
-			draw_arc(Vector2(0, size*0.5), size, PI, PI*2, 16, Color(1,0.2,0.2), 3.0)
-			draw_arc(Vector2(0, size*0.5), size*0.7, PI, PI*2, 16, Color(0.2,1,0.2), 3.0)
-			draw_arc(Vector2(0, size*0.5), size*0.4, PI, PI*2, 16, Color(0.2,0.2,1), 3.0)
+			base_col = Color(1.0, 1.0, 1.0, 1.0)
+			for w in [8.0, 4.0]:
+				var alpha = 0.3 if w == 8.0 else 1.0
+				draw_arc(Vector2(0, size*0.3), size, PI, PI*2, 24, Color(1,0.2,0.2, alpha), w * current_scale)
+				draw_arc(Vector2(0, size*0.3), size*0.7, PI, PI*2, 24, Color(0.2,1,0.2, alpha), w * current_scale)
+				draw_arc(Vector2(0, size*0.3), size*0.4, PI, PI*2, 24, Color(0.2,0.2,1, alpha), w * current_scale)

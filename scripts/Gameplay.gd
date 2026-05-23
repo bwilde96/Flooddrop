@@ -407,7 +407,10 @@ func _process(delta: float) -> void:
 		spawn_timer -= (delta * spawn_mult)
 		if spawn_timer <= 0:
 			spawn_drop()
-			spawn_timer = current_spawn_interval
+			
+			var t = ThemeManager.get_equipped_theme()
+			var theme_spawn_mult = t.get("spawn_interval_mult", 1.0)
+			spawn_timer = current_spawn_interval * theme_spawn_mult
 			
 	if debug_panel.visible:
 		update_debug_ui()
