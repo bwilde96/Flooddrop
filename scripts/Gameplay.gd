@@ -462,7 +462,6 @@ func _trigger_level_up() -> void:
 	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
 	
-	var bg_tween = create_tween()
 	BackgroundManager.update_background(levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)

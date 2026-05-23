@@ -1,13 +1,19 @@
 extends Control
 
-var bg_tex = preload("res://assets/backgrounds/gold_bg.png")
+var bg_tex : ImageTexture
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
     set_anchors_preset(PRESET_FULL_RECT)
     
+    var img = Image.new()
+    var err = img.load("res://assets/backgrounds/gold_bg.png")
+    if err == OK:
+        bg_tex = ImageTexture.create_from_image(img)
+    
     var bg_rect = TextureRect.new()
-    bg_rect.texture = bg_tex
+    if bg_tex:
+        bg_rect.texture = bg_tex
     bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     bg_rect.set_anchors_preset(PRESET_FULL_RECT)
