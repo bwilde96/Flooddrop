@@ -7,7 +7,11 @@ enum ForceDropType {
 	FREEZE = 2,
 	BOMB = 3,
 	SHIELD = 4,
-	RAINBOW = 5
+	RAINBOW = 5,
+	GOLD = 6,
+	METEOR = 7,
+	ACID = 8,
+	NEUTRALIZER = 9
 }
 
 @export_group("Debug Tools")
@@ -76,21 +80,39 @@ var active_ability: String = "time_warp"
 var ability_cooldown: float = 0.0
 var ability_cooldown_max: float = 30.0
 var ability_progress: TextureProgressBar
-
+var ability_container: Control
+var ability_icon_rect: TextureRect
+var is_ability_ready: bool = true
 var is_midas_active: bool = false
 var midas_timer: float = 0.0
 var midas_overlay: ColorRect
+var midas_particles: CPUParticles2D
 
 var is_turret_active: bool = false
 var turret_timer: float = 0.0
-var laser_line: Line2D
-var laser_timer: float = 0.0
 
 var evaporation_particles: CPUParticles2D
 
 var is_tidal_wave_active: bool = false
 var tidal_wave_y: float = 1280.0
+
+func get_screen_top() -> float:
+	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
+
+func get_screen_bottom() -> float:
+	return (get_viewport().get_canvas_transform().affine_inverse() * get_viewport().get_visible_rect().size).y
 var tidal_wave_rect: ColorRect
+var tidal_wave_particles: CPUParticles2D
+
+var active_event: String = ""
+var event_timer: float = 0.0
+var event_overlay: ColorRect = null
+var event_label: Label = null
+var event_tween: Tween = null
+var blackout_rect: ColorRect = null
+var eruption_particles: CPUParticles2D = null
+var event_triggered_for_level: bool = false
+var next_chaos_event: float = 0.0
 
 var current_level_index: int = 0
 var levels = [
@@ -114,8 +136,8 @@ var pool_manager: PoolManager
 @onready var flood_rect: ColorRect = $FloodRect
 @onready var score_label: Label = $HUD/GameUI/MarginContainer/HBox/ScoreLabel
 @onready var high_score_label: Label = $HUD/GameUI/MarginContainer/HBox/HighScoreLabel
-@onready var danger_label: Label = $HUD/GameUI/CenterContainer/DangerLabel
-@onready var level_up_label: Label = $HUD/GameUI/CenterContainer/LevelUpLabel
+@onready var danger_label: Label = $HUD/GameUI/CenterContainer/VBoxContainer/DangerLabel
+@onready var level_up_label: Label = $HUD/GameUI/CenterContainer/VBoxContainer/LevelUpLabel
 @onready var debug_panel: PanelContainer = $HUD/DebugPanel
 @onready var debug_label: Label = $HUD/DebugPanel/Margin/DebugLabel
 @onready var camera: Camera2D = $Camera2D
@@ -128,6 +150,7 @@ var pool_manager: PoolManager
 @onready var shield_icon: ColorRect = $HUD/GameUI/ShieldsContainer/ShieldIcon
 @onready var shield_count_label: Label = $HUD/GameUI/ShieldsContainer/ShieldCountLabel
 
+var freeze_particles: CPUParticles2D
 var shake_intensity: float = 0.0
 
 func _ready() -> void:
@@ -182,113 +205,286 @@ func _ready() -> void:
 	if OS.has_feature("editor"):
 		debug_panel.visible = true
 	
-	laser_line = Line2D.new()
-	laser_line.default_color = Color(1.0, 0.2, 0.2, 0.8)
-	laser_line.width = 8.0
-	laser_line.visible = false
-	add_child(laser_line)
+
 	
 	evaporation_particles = CPUParticles2D.new()
 	evaporation_particles.emitting = false
 	evaporation_particles.one_shot = true
-	evaporation_particles.amount = 100
-	evaporation_particles.lifetime = 1.5
+	evaporation_particles.amount = 400
+	evaporation_particles.lifetime = 1.0
 	evaporation_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
-	evaporation_particles.emission_rect_extents = Vector2(360, 20)
-	evaporation_particles.position = Vector2(360, 1280) # Bottom of screen
+	evaporation_particles.emission_rect_extents = Vector2(360, 50)
+	evaporation_particles.position = Vector2(360, get_screen_bottom()) # Bottom of screen
 	evaporation_particles.direction = Vector2(0, -1)
-	evaporation_particles.spread = 15.0
-	evaporation_particles.gravity = Vector2(0, -100)
-	evaporation_particles.initial_velocity_min = 200.0
-	evaporation_particles.initial_velocity_max = 400.0
-	evaporation_particles.scale_amount_min = 10.0
-	evaporation_particles.scale_amount_max = 30.0
-	evaporation_particles.color = Color(0.9, 0.9, 1.0, 0.6)
+	evaporation_particles.spread = 10.0
+	evaporation_particles.gravity = Vector2(0, -500)
+	evaporation_particles.initial_velocity_min = 800.0
+	evaporation_particles.initial_velocity_max = 1200.0
+	evaporation_particles.scale_amount_min = 0.2
+	evaporation_particles.scale_amount_max = 0.8
+	evaporation_particles.color = Color(1.0, 1.0, 1.0, 0.8)
 	add_child(evaporation_particles)
 	
 	tidal_wave_rect = ColorRect.new()
 	tidal_wave_rect.color = Color(0.2, 0.6, 1.0, 0.7)
-	tidal_wave_rect.size = Vector2(720, 200)
-	tidal_wave_rect.position = Vector2(0, 1280)
+	tidal_wave_rect.size = Vector2(720, 1500) # Ensure it covers the whole screen bottom
+	tidal_wave_rect.position = Vector2(0, get_screen_bottom())
 	tidal_wave_rect.visible = false
 	tidal_wave_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tidal_wave_rect)
 	
+	tidal_wave_particles = CPUParticles2D.new()
+	tidal_wave_particles.emitting = false
+	tidal_wave_particles.amount = 300
+	tidal_wave_particles.lifetime = 0.5
+	tidal_wave_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	tidal_wave_particles.emission_rect_extents = Vector2(360, 10)
+	tidal_wave_particles.position = Vector2(360, 0)
+	tidal_wave_particles.direction = Vector2(0, -1)
+	tidal_wave_particles.spread = 45.0
+	tidal_wave_particles.initial_velocity_min = 200.0
+	tidal_wave_particles.initial_velocity_max = 500.0
+	tidal_wave_particles.scale_amount_min = 0.2
+	tidal_wave_particles.scale_amount_max = 0.5
+	tidal_wave_particles.color = Color(0.8, 0.9, 1.0, 0.8)
+	tidal_wave_rect.add_child(tidal_wave_particles)
+	
 	midas_overlay = ColorRect.new()
-	midas_overlay.color = Color(1.0, 0.8, 0.2, 0.2)
-	midas_overlay.size = Vector2(720, 1280)
+	midas_overlay.color = Color(1.0, 0.8, 0.2, 0.0)
 	midas_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	midas_overlay.visible = false
-	add_child(midas_overlay)
+	game_ui.add_child(midas_overlay)
+	midas_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	
+	midas_particles = CPUParticles2D.new()
+	midas_particles.emitting = false
+	midas_particles.one_shot = true
+	midas_particles.amount = 150
+	midas_particles.lifetime = 2.0
+	midas_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	midas_particles.emission_rect_extents = Vector2(360, 600)
+	midas_particles.position = Vector2(360, 600)
+	midas_particles.direction = Vector2(0, 1)
+	midas_particles.spread = 180.0
+	midas_particles.gravity = Vector2(0, 150)
+	midas_particles.initial_velocity_min = 50.0
+	midas_particles.initial_velocity_max = 200.0
+	midas_particles.scale_amount_min = 0.1
+	midas_particles.scale_amount_max = 0.3
+	midas_particles.color = Color(1.0, 0.9, 0.2, 0.8)
+	add_child(midas_particles)
+	
+	freeze_particles = CPUParticles2D.new()
+	freeze_particles.emitting = false
+	freeze_particles.amount = 150
+	freeze_particles.lifetime = 5.0
+	freeze_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	freeze_particles.emission_rect_extents = Vector2(360, 600)
+	freeze_particles.position = Vector2(360, 600)
+	freeze_particles.direction = Vector2(0, 0)
+	freeze_particles.spread = 180.0
+	freeze_particles.gravity = Vector2(0, -10)
+	freeze_particles.initial_velocity_min = 10.0
+	freeze_particles.initial_velocity_max = 30.0
+	freeze_particles.scale_amount_min = 0.1
+	freeze_particles.scale_amount_max = 0.25
+	freeze_particles.color = Color(0.6, 0.8, 1.0, 0.6)
+	add_child(freeze_particles)
+	
+	event_overlay = ColorRect.new()
+	event_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	event_overlay.modulate.a = 0.0
+	game_ui.add_child(event_overlay)
+	event_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	
+	var soft_tex = _create_soft_particle_texture()
+	evaporation_particles.texture = soft_tex
+	tidal_wave_particles.texture = soft_tex
+	midas_particles.texture = soft_tex
+	freeze_particles.texture = soft_tex
+	event_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	game_ui.move_child(event_overlay, 0)
+	
+	var blackout_rect_bg = ColorRect.new()
+	blackout_rect_bg.color = Color(0.0, 0.0, 0.0, 0.98)
+	blackout_rect_bg.size = Vector2(2500, 2500) # Huge size to cover aspect ratio expansion
+	blackout_rect_bg.position = Vector2(-800, -600) # Centered over the camera
+	blackout_rect_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blackout_rect_bg.modulate.a = 0.0
+	blackout_rect_bg.z_index = 50 # Render OVER normal drops but UNDER rainbow drops!
+	add_child(blackout_rect_bg)
+	move_child(blackout_rect_bg, drop_container.get_index()) # Put behind drops, but over flood
+	blackout_rect = blackout_rect_bg
+	
+	eruption_particles = CPUParticles2D.new()
+	eruption_particles.emitting = false
+	eruption_particles.amount = 80
+	eruption_particles.lifetime = 2.5
+	eruption_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	eruption_particles.emission_rect_extents = Vector2(360, 20)
+	eruption_particles.position = Vector2(360, get_screen_bottom() + 20.0) # Bottom of screen
+	eruption_particles.direction = Vector2(0, -1)
+	eruption_particles.spread = 15.0
+	eruption_particles.initial_velocity_min = 800.0
+	eruption_particles.initial_velocity_max = 1400.0
+	eruption_particles.scale_amount_min = 5.0
+	eruption_particles.scale_amount_max = 20.0
+	eruption_particles.color = Color(1.0, 0.4, 0.0, 0.8)
+	add_child(eruption_particles)
+	move_child(eruption_particles, drop_container.get_index())
+	
+	var event_center = CenterContainer.new()
+	event_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	game_ui.add_child(event_center)
+	event_center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	
+	event_label = Label.new()
+	event_label.text = ""
+	event_label.add_theme_font_size_override("font_size", 54)
+	event_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	event_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	event_label.add_theme_constant_override("outline_size", 12)
+	event_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	event_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	event_label.custom_minimum_size = Vector2(720, 300)
+	event_label.pivot_offset = Vector2(360, 150) # Scale perfectly from true center of the screen
+	event_label.modulate.a = 0.0
+	event_center.add_child(event_label)
 	
 	current_level_index = 0
 	ThemeManager.equip_theme(levels[0].theme)
 
+func _create_soft_particle_texture() -> GradientTexture2D:
+	var tex = GradientTexture2D.new()
+	tex.width = 64
+	tex.height = 64
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	var grad = Gradient.new()
+	grad.add_point(0.0, Color(1, 1, 1, 1))
+	grad.add_point(1.0, Color(1, 1, 1, 0))
+	tex.gradient = grad
+	return tex
+
+func _create_ring_texture(base_radius: int, base_thickness: int, color: Color, is_glow: bool = false) -> ImageTexture:
+	var scale_factor = 2
+	var r = base_radius * scale_factor
+	var t = base_thickness * scale_factor
+	var img = Image.create_empty(r * 2, r * 2, false, Image.FORMAT_RGBA8)
+	var center = Vector2(r, r)
+	var r_outer = float(r)
+	var r_inner = float(r - t)
+	
+	for y in range(r * 2):
+		for x in range(r * 2):
+			var dist = Vector2(x + 0.5, y + 0.5).distance_to(center)
+			var alpha_mult = 0.0
+			
+			if is_glow:
+				var center_radius = (r_outer + r_inner) / 2.0
+				var tube_width = float(t) / 2.0
+				var dist_from_center = abs(dist - center_radius)
+				if dist_from_center < tube_width:
+					var normalized_dist = dist_from_center / tube_width
+					alpha_mult = pow(1.0 - normalized_dist, 1.2)
+			else:
+				if dist <= r_outer and dist >= r_inner:
+					alpha_mult = 1.0
+				elif dist > r_outer and dist < r_outer + 2.0:
+					alpha_mult = max(0.0, 1.0 - (dist - r_outer) / 2.0)
+				elif dist < r_inner and dist > r_inner - 2.0:
+					alpha_mult = max(0.0, 1.0 - (r_inner - dist) / 2.0)
+				
+			if alpha_mult > 0.0:
+				var c = color
+				c.a *= alpha_mult
+				if is_glow and alpha_mult > 0.7:
+					c = c.lerp(Color.WHITE, min(1.0, (alpha_mult - 0.7) * 3.3))
+				img.set_pixel(x, y, c)
+				
+	return ImageTexture.create_from_image(img)
+
 func _setup_ability_ui() -> void:
-	var container = Control.new()
-	container.custom_minimum_size = Vector2(100, 100)
-	game_ui.add_child(container)
-	container.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	container.position = Vector2(game_ui.size.x - 140, game_ui.size.y - 140)
+	if active_ability == "none": return
 	
-	ability_progress = TextureProgressBar.new()
-	var img = Image.create(100, 100, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0.2, 0.2, 0.2, 0.8))
-	var tex_bg = ImageTexture.create_from_image(img)
-	
-	var img_fill = Image.create(100, 100, false, Image.FORMAT_RGBA8)
-	img_fill.fill(Color(0.8, 0.8, 0.2, 0.8))
-	var tex_fill = ImageTexture.create_from_image(img_fill)
-	
-	ability_progress.texture_under = tex_bg
-	ability_progress.texture_progress = tex_fill
-	ability_progress.fill_mode = TextureProgressBar.FILL_CLOCKWISE
-	ability_progress.step = 0.1
-	ability_progress.max_value = ability_cooldown_max
-	ability_progress.value = ability_cooldown_max
+	ability_container = Control.new()
+	ability_container.custom_minimum_size = Vector2(120, 120)
+	ability_container.size = Vector2(120, 120)
+	game_ui.add_child(ability_container)
+	ability_container.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	ability_container.position = Vector2(game_ui.size.x - 150, game_ui.size.y - 150)
+	ability_container.pivot_offset = Vector2(60, 60)
 	
 	var icon_path = "res://assets/icons/icon_%s.jpg" % active_ability
-	var icon_tex = load(icon_path)
-	if icon_tex != null:
-		var tex_rect = TextureRect.new()
-		tex_rect.texture = icon_tex
-		tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tex_rect.custom_minimum_size = Vector2(80, 80)
-		tex_rect.position = Vector2(10, 10)
-		container.add_child(tex_rect)
+	var icon_tex = null
+	
+	if ResourceLoader.exists(icon_path):
+		icon_tex = load(icon_path)
 		
-		# Make progress fill a dark transparent overlay
-		var img_overlay = Image.create(100, 100, false, Image.FORMAT_RGBA8)
-		img_overlay.fill(Color(0, 0, 0, 0.7))
-		ability_progress.texture_progress = ImageTexture.create_from_image(img_overlay)
-		ability_progress.texture_under = null
-		# We want it to be fully dark when cooling down, and empty when ready
-		ability_progress.fill_mode = TextureProgressBar.FILL_COUNTER_CLOCKWISE
+	if icon_tex == null:
+		var img = Image.new()
+		if img.load(icon_path) == OK:
+			icon_tex = ImageTexture.create_from_image(img)
+			
+	ability_icon_rect = TextureRect.new()
+	if icon_tex != null:
+		ability_icon_rect.texture = icon_tex
+		
+	ability_icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ability_icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ability_icon_rect.custom_minimum_size = Vector2(120, 120)
+	ability_icon_rect.size = Vector2(120, 120)
+	ability_icon_rect.position = Vector2(0, 0)
+	ability_icon_rect.pivot_offset = Vector2(60, 60)
+	
+	if active_ability == "evaporation":
+		ability_icon_rect.position = Vector2(-2, 4) # Adjust slight off-center visual from image
+	
+	var mat = CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	ability_icon_rect.material = mat
+	
+	ability_container.add_child(ability_icon_rect)
+	
+	ability_progress = TextureProgressBar.new()
+	ability_progress.texture_under = _create_ring_texture(60, 12, Color(0.0, 0.0, 0.0, 0.8), false)
+	ability_progress.texture_progress = _create_ring_texture(60, 12, Color(0.0, 1.0, 0.9, 1.0), true)
+	ability_progress.fill_mode = TextureProgressBar.FILL_CLOCKWISE
+	ability_progress.step = 0.01
+	ability_progress.max_value = ability_cooldown_max
+	ability_progress.value = ability_cooldown_max
+	ability_progress.position = Vector2(0, 0)
+	ability_progress.scale = Vector2(0.5, 0.5)
+	ability_container.add_child(ability_progress)
 	
 	var btn = Button.new()
 	btn.text = "USE"
-	btn.custom_minimum_size = Vector2(100, 100)
-	btn.modulate.a = 0.0 # Make it invisible, just clickable
-	
-	container.add_child(ability_progress)
-	container.add_child(btn)
-	
+	btn.custom_minimum_size = Vector2(120, 120)
+	btn.size = Vector2(120, 120)
+	btn.modulate.a = 0.0
+	ability_container.add_child(btn)
 	btn.pressed.connect(_use_ability)
+	
 	var t = ThemeManager.get_equipped_theme()
 	flood_rect.material.set_shader_parameter("top_color", t.drop_color)
 	flood_rect.material.set_shader_parameter("bottom_color", t.flood_color)
 	flood_rect.material.set_shader_parameter("liquid_type", t.get("shader_type", 0))
+
+func _trigger_ability_ready_animation() -> void:
+	is_ability_ready = true
+	AudioManager.play_sfx("power_up")
+	if not ability_icon_rect or not ability_container: return
+	ability_icon_rect.modulate = Color(2.0, 2.0, 2.0, 1.0) # Flash bright white
+	var tw = create_tween()
+	tw.tween_property(ability_icon_rect, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.5)
 	
-	level_up_label.modulate.a = 0.0
-	level_up_label.scale = Vector2(1.5, 1.5)
+	ability_container.scale = Vector2(1.5, 1.5)
+	var tw2 = create_tween()
+	tw2.tween_property(ability_container, "scale", Vector2(1.0, 1.0), 0.5).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 	
-	update_hud()
-	_update_powerup_hud()
-	_update_flood_visual_instant()
-	
-	await get_tree().create_timer(grace_period).timeout
-	is_playing = true
+	_spawn_particle(ability_container.global_position + Vector2(60, 60), Color(0.2, 1.0, 0.8), false, true)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
@@ -325,12 +521,57 @@ func _process(delta: float) -> void:
 				current_level_index += 1
 				_trigger_level_up()
 				
+		if not event_triggered_for_level and GameManager.survival_time >= levels[current_level_index].time + 15.0:
+			_trigger_event_for_current_level()
+			event_triggered_for_level = true
+			
+		if event_timer > 0:
+			event_timer -= delta
+			if active_event == "chaos":
+				next_chaos_event -= delta
+				if next_chaos_event <= 0:
+					_trigger_chaos_event()
+					var chaos_interval = max(5.0, 15.0 - ((GameManager.survival_time - 210.0) / 10.0))
+					next_chaos_event = chaos_interval
+			if event_timer <= 0 and active_event != "chaos":
+				if current_level_index >= 7:
+					active_event = "chaos"
+					event_timer = 9999.0 # Restore endless loop
+				else:
+					active_event = ""
+				event_overlay.modulate.a = 0.0
+				blackout_rect.modulate.a = 0.0
+				if eruption_particles: eruption_particles.emitting = false
+				
+		if active_event == "eruption" or active_event == "toxic" or active_event == "overdrive" or active_event == "prismatic":
+			var pulse = (sin(Time.get_ticks_msec() / 150.0) * 0.5 + 0.5) * 0.3
+			event_overlay.modulate.a = pulse
+			if active_event == "prismatic" or active_event == "chaos_prismatic":
+				var hue = fmod(Time.get_ticks_msec() / 2000.0, 1.0)
+				event_overlay.color = Color.from_hsv(hue, 1.0, 1.0)
+		elif event_timer <= 0:
+			event_overlay.modulate.a = lerpf(event_overlay.modulate.a, 0.0, delta * 5.0)
+			
+		if not _illuminate_tween or not _illuminate_tween.is_valid():
+			if active_event == "prismatic" or active_event == "chaos_prismatic":
+				blackout_rect.modulate.a = lerpf(blackout_rect.modulate.a, 1.0, delta * 5.0)
+			else:
+				blackout_rect.modulate.a = lerpf(blackout_rect.modulate.a, 0.0, delta * 5.0)
+			
+		if active_event == "toxic":
+			current_flood += 5.0 * delta # Survivable passive drain
+			if current_flood >= max_flood:
+				_on_drop_missed(0.0) # Trigger game over check
+			_update_flood_visual_smooth(delta)
+			
 		var freeze_mult = get_freeze_multiplier()
 
 		if freeze_timer > 0:
 			freeze_timer -= delta
+			freeze_overlay.modulate.a = 0.4 + sin(Time.get_ticks_msec() / 200.0) * 0.1 # Pulse
 			if freeze_timer <= 0:
 				freeze_overlay.visible = false
+				freeze_particles.emitting = false
 				spawn_timer = max(spawn_timer, post_freeze_spawn_grace)
 	
 		if shake_intensity > 0:
@@ -343,6 +584,14 @@ func _process(delta: float) -> void:
 		var ramp_mult = freeze_mult if freeze_affects_difficulty_ramp else 1.0
 		current_spawn_interval = max(min_spawn_interval, current_spawn_interval - (spawn_ramp_speed * delta * ramp_mult))
 		current_drop_speed = min(max_drop_speed, current_drop_speed + (speed_ramp_speed * delta * ramp_mult))
+		
+		# Infinite scaling for Cosmic Chaos (Level 8+)
+		if current_level_index >= 7:
+			var endless_time = max(0.0, GameManager.survival_time - 210.0)
+			current_spawn_interval -= (0.05 * (endless_time / 180.0)) * delta * ramp_mult
+			current_spawn_interval = max(0.05, current_spawn_interval) # Hard floor to prevent crashes
+			current_drop_speed += (30.0 * (endless_time / 180.0)) * delta * ramp_mult
+			
 		current_power_up_chance = min(power_up_spawn_chance_max, current_power_up_chance + (power_up_spawn_ramp * delta * ramp_mult))
 		
 		if current_flood > 0:
@@ -354,6 +603,7 @@ func _process(delta: float) -> void:
 		# Time Warp Logic
 		if is_midas_active:
 			midas_overlay.visible = true
+			midas_overlay.color.a = 0.15 + sin(Time.get_ticks_msec() / 150.0) * 0.05
 			midas_timer -= delta
 			if midas_timer <= 0:
 				is_midas_active = false
@@ -362,6 +612,7 @@ func _process(delta: float) -> void:
 		if is_tidal_wave_active:
 			tidal_wave_y -= delta * 1500.0
 			tidal_wave_rect.position.y = tidal_wave_y
+			shake_intensity = 15.0 # Continuous shake while wave is moving
 			
 			for d in drop_container.get_children():
 				if d.has_method("pop") and "state" in d and "DropState" in d:
@@ -371,85 +622,163 @@ func _process(delta: float) -> void:
 			if tidal_wave_y < -200:
 				is_tidal_wave_active = false
 				tidal_wave_rect.visible = false
+				tidal_wave_particles.emitting = false
 		
 		if is_turret_active:
 			turret_timer -= delta
 			if turret_timer <= 0:
 				is_turret_active = false
 			else:
-				# Auto pop drops low on screen
+				# Auto fire laser bullets at low drops
 				for d in drop_container.get_children():
-					if d.has_method("pop") and "state" in d and "DropState" in d:
-						if d.position.y > 1280.0 - 150.0 and d.state == d.DropState.FALLING:
-							laser_line.clear_points()
-							laser_line.add_point(Vector2(360, 1280))
-							laser_line.add_point(d.position)
-							laser_line.visible = true
-							laser_timer = 0.1
-							AudioManager.play_sfx("button") # temporary laser sound
-							d.pop()
-							break # Pop one per frame maximum for turret
-							
-		if laser_timer > 0:
-			laser_timer -= delta
-			if laser_timer <= 0:
-				laser_line.visible = false
+					if d.has_method("pop") and "state" in d and d.state == d.DropState.FALLING and "is_targeted_by_turret" in d and not d.is_targeted_by_turret:
+						if d.position.y > get_screen_bottom() - 300.0: # Increased range
+							d.is_targeted_by_turret = true
+							_fire_laser_bullet(d)
+							break # Fire one per frame max
 		
 		if ability_cooldown < ability_cooldown_max:
+			is_ability_ready = false
 			ability_cooldown += delta
-			ability_progress.value = ability_cooldown_max - ability_cooldown
+			if ability_progress: ability_progress.value = ability_cooldown
+			if ability_icon_rect: ability_icon_rect.modulate = Color(0.8, 0.8, 0.8, 0.9)
+			if ability_container: ability_container.scale = Vector2(1.0, 1.0)
 			if ability_cooldown >= ability_cooldown_max:
-				AudioManager.play_sfx("power_up") # Ready sound
-				ability_progress.modulate = Color(1,1,1,1)
-			else:
-				ability_progress.modulate = Color(0.8,0.8,0.8,1.0)
-				
+				ability_cooldown = ability_cooldown_max
+				if ability_progress: ability_progress.value = ability_cooldown_max
+				_trigger_ability_ready_animation()
+		else:
+			if is_ability_ready and ability_container:
+				var pulse = 1.0 + (sin(Time.get_ticks_msec() / 300.0) * 0.05)
+				ability_container.scale = Vector2(pulse, pulse)
+		
 		spawn_timer -= (delta * spawn_mult)
 		if spawn_timer <= 0:
 			spawn_drop()
 			
 			var t = ThemeManager.get_equipped_theme()
 			var theme_spawn_mult = t.get("spawn_interval_mult", 1.0)
+			var ev = active_event
+			if ev.begins_with("chaos_"): ev = ev.replace("chaos_", "")
+			
+			if ev == "overdrive":
+				theme_spawn_mult *= 0.33 # 3x faster spawns
+				
 			spawn_timer = current_spawn_interval * theme_spawn_mult
 			
 	if debug_panel.visible:
 		update_debug_ui()
+
+func _fire_laser_bullet(target: Node) -> void:
+	AudioManager.play_sfx("button") # Will replace with real laser sfx later
+	var bullet = ColorRect.new()
+	bullet.color = Color(1.0, 0.2, 0.2, 1.0)
+	bullet.size = Vector2(8, 40)
+	bullet.pivot_offset = Vector2(4, 20)
+	var start_pos = Vector2(360, get_screen_bottom())
+	bullet.position = start_pos - bullet.pivot_offset
+	
+	# Glow effect
+	var mat = CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	bullet.material = mat
+	
+	var dir = (target.position - start_pos).normalized()
+	bullet.rotation = dir.angle() + PI/2.0
+	
+	add_child(bullet)
+	
+	var dist = start_pos.distance_to(target.position)
+	var speed = 3000.0
+	var travel_time = dist / speed
+	
+	var tw = create_tween()
+	tw.tween_property(bullet, "position", target.position - bullet.pivot_offset, travel_time)
+	tw.tween_callback(func():
+		bullet.queue_free()
+		if is_instance_valid(target) and target.has_method("pop_by_bomb") and target.state == target.DropState.FALLING:
+			target.pop_by_bomb()
+			_spawn_particle(target.position, Color(1.0, 0.2, 0.2), false, true) # Red explosion
+	)
 
 func _use_ability() -> void:
 	if not is_playing or get_tree().paused: return
 	if ability_cooldown < ability_cooldown_max: return
 	
 	ability_cooldown = 0.0
-	ability_progress.value = ability_cooldown_max
-	ability_progress.modulate = Color(0.8,0.8,0.8,1.0)
+	is_ability_ready = false
+	if ability_progress: ability_progress.value = 0.0
+	if ability_icon_rect: ability_icon_rect.modulate = Color(0.8, 0.8, 0.8, 0.9)
+	if ability_container: ability_container.scale = Vector2(1.0, 1.0)
 	
 	AudioManager.play_sfx("power_up")
 	
-	# Execute ability
 	if active_ability == "time_warp":
 		freeze_timer = max(freeze_timer, 5.0) # Using existing freeze logic
 		freeze_overlay.visible = true
-		freeze_overlay.modulate = Color(0.5, 0.5, 1.0, 0.5)
+		freeze_overlay.modulate = Color(0.3, 0.2, 1.0, 0.6) # Deep Indigo
+		freeze_particles.emitting = true
+		shake_intensity = 20.0 # Brief impact
+		
+		event_overlay.color = Color(0.8, 0.9, 1.0)
+		event_overlay.modulate.a = 1.0
+		var tw = create_tween()
+		tw.tween_property(event_overlay, "modulate:a", 0.0, 0.5)
 	elif active_ability == "evaporation":
-		current_flood = max(0.0, current_flood - 30.0)
-		_update_flood_visual_smooth(0.0)
+		evaporation_particles.position.y = get_screen_bottom() - current_flood * 5.0 # Emit exactly from top of flood
+		var target_flood = max(0.0, current_flood - 30.0)
+		var tw = create_tween()
+		tw.tween_property(self, "current_flood", target_flood, 0.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+		tw.parallel().tween_method(_update_flood_visual_smooth_raw, current_flood, target_flood, 0.5)
+		
+		event_overlay.color = Color(1.0, 1.0, 1.0)
+		event_overlay.modulate.a = 0.4
+		var tw2 = create_tween()
+		tw2.tween_property(event_overlay, "modulate:a", 0.0, 0.4)
+		
+		shake_intensity = 20.0
 		evaporation_particles.emitting = true
+		AudioManager.play_sfx("pop")
 	elif active_ability == "tidal_wave":
 		is_tidal_wave_active = true
-		tidal_wave_y = 1280.0
+		tidal_wave_y = get_screen_bottom()
 		tidal_wave_rect.visible = true
+		tidal_wave_particles.emitting = true
+		shake_intensity = 40.0 # Huge initial impact
+		event_overlay.color = Color(0.0, 0.4, 1.0)
+		event_overlay.modulate.a = 0.8
+		var tw = create_tween()
+		tw.tween_property(event_overlay, "modulate:a", 0.0, 1.0)
 	elif active_ability == "midas_touch":
 		is_midas_active = true
 		midas_timer = 8.0
+		midas_particles.emitting = true
+		for d in drop_container.get_children():
+			if d.has_method("pop") and d.state == d.DropState.FALLING:
+				d.type = d.DropType.GOLD
+				_spawn_particle(d.position, Color(1.0, 0.9, 0.2))
 	elif active_ability == "auto_turret":
 		is_turret_active = true
 		turret_timer = 4.0
+
+func _update_flood_visual_smooth_raw(val: float) -> void:
+	if not flood_rect: return
+	var p = val / max_flood
+	var target_h = p * (get_screen_bottom() - get_screen_top() + 150)
+	flood_rect.size.y = target_h
+	flood_rect.position.y = get_screen_bottom() - target_h
+	flood_rect.material.set_shader_parameter("water_height", target_h)
 
 func _trigger_level_up() -> void:
 	var new_level = levels[current_level_index]
 	ThemeManager.equip_theme(new_level.theme) # Actually, ThemeManager will return equipped theme
 	var t = ThemeManager.get_theme(new_level.theme)
 	ThemeManager.equip_theme(new_level.theme) # Make sure it's globally equipped
+	
+	event_triggered_for_level = false
+	if active_event != "chaos":
+		active_event = ""
+		event_timer = 0.0
 	
 	level_up_label.text = "LEVEL %d - %s" % [current_level_index + 1, t.name.to_upper()]
 	
@@ -466,6 +795,90 @@ func _trigger_level_up() -> void:
 	
 	AudioManager.play_sfx("power_up")
 
+func _start_event(title: String, duration: float, internal_name: String, color: Color = Color.WHITE) -> void:
+	active_event = internal_name
+	event_timer = duration
+	shake_intensity = screen_shake_strength * 2.0 # Big shake on start
+	
+	if active_event == "eruption": event_overlay.color = Color(1.0, 0.2, 0.0)
+	elif active_event == "toxic": event_overlay.color = Color(0.5, 1.0, 0.0)
+	elif active_event == "overdrive": event_overlay.color = Color(0.1, 1.0, 0.8)
+	elif active_event == "prismatic": event_overlay.color = Color(1.0, 1.0, 1.0)
+	
+	event_label.text = title
+	event_label.add_theme_color_override("font_color", color)
+	
+	var current_screen_width = get_viewport().get_visible_rect().size.x
+	event_label.custom_minimum_size = Vector2(current_screen_width, 300)
+	event_label.pivot_offset = Vector2(current_screen_width / 2.0, 150)
+	
+	if event_tween and event_tween.is_valid():
+		event_tween.kill()
+	
+	event_tween = create_tween()
+	event_tween.tween_property(event_label, "modulate:a", 1.0, 0.2)
+	event_tween.tween_property(event_label, "scale", Vector2(1.2, 1.2), 0.2).set_trans(Tween.TRANS_BACK)
+	event_tween.tween_property(event_label, "scale", Vector2(1.0, 1.0), 0.2)
+	event_tween.tween_property(event_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
+	
+	AudioManager.play_sfx("power_up") # Could be a new siren sound later
+
+func _trigger_event_for_current_level() -> void:
+	var level = current_level_index
+	if level == 1:
+		_start_event("SLIME METEOR!", 1.0, "meteor", Color(0.2, 1.0, 0.2))
+		var old_force = force_drop_type
+		force_drop_type = ForceDropType.METEOR
+		spawn_drop()
+		force_drop_type = old_force
+	elif level == 2:
+		_start_event("VOLCANIC ERUPTION!", 7.0, "eruption", Color(1.0, 0.4, 0.1))
+		if eruption_particles: eruption_particles.emitting = true
+	elif level == 3:
+		_start_event("CORROSIVE CORE!", 15.0, "toxic", Color(0.8, 1.0, 0.1))
+		var old_force = force_drop_type
+		force_drop_type = ForceDropType.NEUTRALIZER
+		spawn_drop() # Spawn Neutralizer immediately
+		force_drop_type = old_force
+	elif level == 4:
+		_start_event("GOLDEN PINATA!", 15.0, "midas", Color(1.0, 0.9, 0.2))
+		var old_force = force_drop_type
+		force_drop_type = ForceDropType.GOLD
+		spawn_drop() # Spawn Piñata
+		force_drop_type = old_force
+	elif level == 5:
+		_start_event("BLACKOUT!", 10.0, "prismatic", Color(0.3, 0.3, 0.3))
+		var old_force = force_drop_type
+		force_drop_type = ForceDropType.RAINBOW
+		spawn_drop() # Spawn a Rainbow drop immediately so the player isn't stuck in the dark
+		force_drop_type = old_force
+	elif level == 6:
+		_start_event("CYBER GLITCH!", 12.0, "overdrive", Color(0.1, 1.0, 0.8))
+	elif level == 7:
+		_start_event("COSMIC CHAOS!", 9999.0, "chaos", Color(0.8, 0.4, 1.0))
+		next_chaos_event = 5.0
+
+func _trigger_chaos_event() -> void:
+	var events = ["meteor", "eruption", "toxic", "midas", "prismatic", "overdrive"]
+	var e = events[randi() % events.size()]
+	match e:
+		"meteor":
+			_start_event("SLIME METEOR!", 1.0, "chaos", Color(0.2, 1.0, 0.2))
+			var old_force = force_drop_type
+			force_drop_type = ForceDropType.METEOR
+			spawn_drop()
+			force_drop_type = old_force
+		"eruption": _start_event("ERUPTION!", 7.0, "chaos_eruption", Color(1.0, 0.4, 0.1))
+		"toxic": _start_event("TOXIC SURGE!", 10.0, "chaos_toxic", Color(0.8, 1.0, 0.1))
+		"midas": _start_event("MIDAS RUSH!", 7.0, "chaos_midas", Color(1.0, 0.9, 0.2))
+		"prismatic": 
+			_start_event("PRISMATIC STORM!", 5.0, "chaos_prismatic", Color(1.0, 0.5, 1.0))
+			var old_force = force_drop_type
+			force_drop_type = ForceDropType.RAINBOW
+			spawn_drop() # Provide an immediate light source in chaos
+			force_drop_type = old_force
+		"overdrive": _start_event("NEON OVERDRIVE!", 8.0, "chaos_overdrive", Color(0.1, 1.0, 0.8))
+
 func _count_active_powerups() -> int:
 	var count = 0
 	for d in drop_container.get_children():
@@ -473,20 +886,52 @@ func _count_active_powerups() -> int:
 			count += 1
 	return count
 
-func spawn_drop() -> void:
+var rainbow_spawn_counter: int = 0
+func spawn_drop(is_cluster_child: bool = false) -> void:
+	if pool_manager == null: return
+	
+	var ev = active_event.replace("chaos_", "")
+	var is_eruption = (ev == "eruption")
+	
+	# Eruption cluster spawning
+	if is_eruption and not is_cluster_child:
+		if randf() > 0.5: # 50% chance to spawn an extra drop instead of guaranteed 1-2 extras
+			spawn_drop(true)
+			
+	var safe_left = 60.0
+	var safe_right = 660.0
 	var drop = pool_manager.get_drop()
 	
+	var act_speed = current_drop_speed
+	if ev == "eruption": act_speed = min(current_drop_speed * 1.5, 950.0)
+	elif ev == "overdrive": act_speed = current_drop_speed * 0.6
+	
 	drop.gameplay_ref = self
-	drop.fall_speed = current_drop_speed
+	drop.fall_speed = act_speed
 	drop.flood_damage = flood_damage_per_miss
 	
 	# Determine drop type
 	var chosen_type = drop.DropType.NORMAL
 	
-	if OS.has_feature("editor") and force_drop_type != ForceDropType.NONE:
-		chosen_type = force_drop_type as int
-	elif is_midas_active:
+	if is_midas_active:
 		chosen_type = drop.DropType.GOLD
+	elif force_drop_type != ForceDropType.NONE:
+		chosen_type = force_drop_type as int
+	elif ev == "toxic":
+		var roll = randf()
+		if roll < 0.25:
+			chosen_type = drop.DropType.NEUTRALIZER
+		elif roll < 0.55:
+			chosen_type = drop.DropType.ACID
+	elif ev == "prismatic":
+		rainbow_spawn_counter += 1
+		if randf() < 0.35 or rainbow_spawn_counter > 2:
+			chosen_type = drop.DropType.RAINBOW # Rainbow drops light up the way
+			rainbow_spawn_counter = 0
+		else:
+			chosen_type = drop.DropType.NORMAL # Normal drops are hidden in the dark!
+	elif ev == "toxic":
+		chosen_type = drop.DropType.NORMAL # Don't spawn powerups during Corrosive, just normal drops
 	else:
 		if GameManager.survival_time >= min_time_before_powerups:
 			if _count_active_powerups() < max_active_powerups:
@@ -494,10 +939,10 @@ func spawn_drop() -> void:
 					chosen_type = _pick_random_powerup()
 					
 	drop.type = chosen_type
+	if drop.has_method("apply_stats"):
+		drop.apply_stats()
 	drop.queue_redraw()
 	
-	var safe_left = 60.0
-	var safe_right = 660.0
 	var x_pos = randf_range(safe_left, safe_right)
 	
 	if abs(x_pos - last_spawn_x) < min_drop_distance_x:
@@ -508,9 +953,29 @@ func spawn_drop() -> void:
 	x_pos = clamp(x_pos, safe_left, safe_right)
 	last_spawn_x = x_pos
 	
-	# Spawn lower so formation animation is visible
-	drop.position = Vector2(x_pos, 50.0)
+	var spawn_y = get_screen_bottom() + 150.0 if is_eruption else get_screen_top() + 50.0
 	
+	# Spawn lower so formation animation is visible
+	drop.position = Vector2(x_pos, spawn_y)
+	
+	if is_eruption:
+		drop.fall_velocity = -1100.0 # Shoot up!
+		drop.is_eruption = true
+	else:
+		drop.fall_velocity = act_speed
+		drop.is_eruption = false
+		
+	if ev == "overdrive":
+		drop.is_glitching = true
+	else:
+		drop.is_glitching = false
+		
+	if ev == "midas" and chosen_type == drop.DropType.GOLD:
+		drop.is_pinata = true
+		drop.bounce_velocity_x = randf_range(300.0, 500.0) * (1.0 if randf() > 0.5 else -1.0)
+	else:
+		drop.is_pinata = false
+		
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var requested_formation = randf_range(0.8, 3.5)
 	var proposed_fall_time = current_time + requested_formation
@@ -524,11 +989,45 @@ func spawn_drop() -> void:
 	# Pass the exact formation duration to the drop
 	drop.spawn_formation_duration = requested_formation
 	
+	if is_eruption:
+		drop.spawn_formation_duration = 0.1 # Shoot up instantly!
+		var travel_dist = (spawn_y - get_screen_top()) * randf_range(0.75, 0.95)
+		drop.fall_velocity = -sqrt(2.0 * 1500.0 * travel_dist) # Dynamically calculate velocity to reach near the top!
+	elif ev == "overdrive": 
+		drop.spawn_formation_duration *= 0.5 # Form faster during overdrive
+	
+	drop.popped.connect(_on_drop_popped)
+	drop.missed.connect(_on_drop_missed)
+
+func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_velocity_y: float = 0.0, custom_vel_x: float = 0.0) -> void:
+	if pool_manager == null: return
+	var drop = pool_manager.get_drop()
+	drop.gameplay_ref = self
+	
+	if initial_velocity_y != 0.0:
+		drop.fall_velocity = initial_velocity_y
+		if drop.has_method("force_fall"):
+			drop.force_fall()
+	else:
+		drop.fall_velocity = current_drop_speed
+		
+	drop.bounce_velocity_x = custom_vel_x
+	drop.flood_damage = flood_damage_per_miss
+	drop.type = t
+	drop.custom_scale_mult = scale_mult # Apply scale before generating stats!
+	
+	if drop.has_method("apply_stats"):
+		drop.apply_stats()
+		
+	drop.queue_redraw()
+	drop.position = pos
+	drop.spawn_formation_duration = 0.2
+	
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
 
 func _pick_random_powerup() -> int:
-	var total_weight = weight_drain + weight_freeze + weight_bomb + weight_shield + weight_rainbow
+	var total_weight = weight_drain + weight_freeze + weight_bomb + weight_shield
 	var roll = randf_range(0.0, total_weight)
 	
 	if roll < weight_drain: return 1 # DRAIN
@@ -536,9 +1035,7 @@ func _pick_random_powerup() -> int:
 	if roll < weight_freeze: return 2 # FREEZE
 	roll -= weight_freeze
 	if roll < weight_bomb: return 3 # BOMB
-	roll -= weight_bomb
-	if roll < weight_shield: return 4 # SHIELD
-	return 5 # RAINBOW
+	return 4 # SHIELD
 
 func _on_drop_popped(drop_node: Area2D) -> void:
 	var t = drop_node.type
@@ -599,6 +1096,27 @@ func _on_drop_popped(drop_node: Area2D) -> void:
 			_spawn_particle(pos, Color.WHITE, false, true)
 			AudioManager.play_sfx("rainbow")
 			AudioManager.vibrate("rainbow")
+			if active_event == "prismatic" or active_event == "chaos_prismatic":
+				illuminate_blackout()
+		drop_node.DropType.METEOR:
+			var m_score = base_score * 5
+			GameManager.score += m_score
+			_spawn_floating_text("+%d MASSIVE!" % m_score, pos, Color(0.2, 1.0, 0.2))
+			_spawn_particle(pos, drop_node.get_current_color(), true)
+			AudioManager.play_sfx("bomb")
+			AudioManager.vibrate("bomb")
+			shake_intensity = screen_shake_strength * 3.0 # Huge shake!
+		drop_node.DropType.NEUTRALIZER:
+			current_flood = max(0.0, current_flood - 35.0)
+			_spawn_floating_text("NEUTRALIZED!", pos, Color(0.8, 1.0, 1.0))
+			_spawn_particle(pos, drop_node.get_current_color())
+			AudioManager.play_sfx("power_up")
+			_update_flood_visual_smooth(0.0)
+		drop_node.DropType.ACID:
+			_spawn_floating_text("TOXIC!", pos, Color(0.8, 1.0, 0.1))
+			_spawn_particle(pos, drop_node.get_current_color())
+			AudioManager.play_sfx("miss")
+			_on_drop_missed(drop_node.flood_damage * 1.5) # Penalty!
 			
 	update_hud()
 
@@ -686,7 +1204,7 @@ func update_debug_ui() -> void:
 		"Active Drops: %d" % p_info.active_drops
 
 func _update_flood_visual_instant() -> void:
-	var screen_height = 1280.0
+	var screen_height = get_screen_bottom() - get_screen_top()
 	var flood_ratio = current_flood / max_flood
 	var target_height = flood_ratio * screen_height
 	flood_rect.offset_top = -target_height
@@ -694,7 +1212,7 @@ func _update_flood_visual_instant() -> void:
 	_update_flood_color(flood_ratio)
 
 func _update_flood_visual_smooth(delta: float) -> void:
-	var screen_height = 1280.0
+	var screen_height = get_screen_bottom() - get_screen_top()
 	var flood_ratio = current_flood / max_flood
 	var target_height = flood_ratio * screen_height
 	
@@ -724,5 +1242,17 @@ func _update_flood_color(ratio: float) -> void:
 		bot_c.a = 0.95
 		flood_rect.material.set_shader_parameter("top_color", top_c)
 		flood_rect.material.set_shader_parameter("bottom_color", bot_c)
+		flood_rect.material.set_shader_parameter("flood_height", flood_rect.size.y)
 	else:
 		flood_rect.color = final_color
+
+var _illuminate_tween: Tween = null
+func illuminate_blackout() -> void:
+	if not blackout_rect: return
+	if _illuminate_tween and _illuminate_tween.is_valid():
+		_illuminate_tween.kill()
+		
+	# Hold at fully bright for 2 seconds, then slowly fade back to pitch black over 2 seconds
+	blackout_rect.modulate.a = 0.0
+	_illuminate_tween = create_tween()
+	_illuminate_tween.tween_property(blackout_rect, "modulate:a", 1.0, 2.0).set_delay(2.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)

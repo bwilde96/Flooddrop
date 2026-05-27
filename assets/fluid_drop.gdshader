@@ -5,6 +5,7 @@ uniform float drop_radius = 32.0;
 uniform vec4 water_color : source_color = vec4(0.35, 0.78, 0.98, 1.0);
 uniform float anchor_multiplier = 1.0;
 uniform int liquid_type = 0; // 0=Water, 1=Lava, 2=Slime, 3=Acid, 4=Rainbow, 5=Galaxy, 6=Gold, 7=Neon Plasma
+uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear;
 
 // Simple random function
 float rand(vec2 co) {
@@ -99,13 +100,23 @@ void fragment() {
         vec4 final_color = vec4(0.0);
         
         if (liquid_type == 0) {
-            // WATER: High opacity, deep volume, caustic ripples
-            float caustics = sin(pos.x * 0.1 + TIME * 2.0) * sin(pos.y * 0.1 + TIME * 1.5);
-            // Use the passed-in water_color so special drops (Bomb, Drain, etc) keep their unique colors!
-            vec4 dark_color = vec4(water_color.rgb * 0.3, 1.0);
-            vec4 light_color = vec4(water_color.rgb * 0.8, 1.0);
-            vec4 volume = mix(dark_color, light_color, diffuse + caustics * 0.1);
-            final_color = volume + vec4(1.0, 1.0, 1.0, 0.0) * specular * 1.5 + vec4(clamp(light_color.rgb + 0.4, 0.0, 1.0), 0.0) * fresnel;
+            // WATER: True Optical Refraction Lens
+            // Use the 3D surface normal and depth (z) to refract the screen texture
+            vec2 refracted_uv = SCREEN_UV - normal.xy * 0.08 * z; 
+            vec4 bg_refraction = texture(screen_texture, refracted_uv);
+            
+            // Mix the refracted background with the droplet's intended tint (e.g. blue for normal, red for bomb)
+            vec4 tint = vec4(water_color.rgb, 1.0);
+            
+            // It is clearest at the center, tint gets stronger at the edges (fresnel)
+            vec4 volume = mix(bg_refraction, tint, 0.2 + fresnel * 0.5);
+            
+            // Add a sharp inner shadow (caustic focus) at the bottom
+            float inner_shadow = smoothstep(0.0, 0.5, -normal.y - normal.x * 0.5) * 0.4;
+            
+            final_color = volume - vec4(inner_shadow);
+            final_color += vec4(1.0) * specular * 3.0; // Extremely sharp glass specular
+            final_color += vec4(1.0) * fresnel * 0.8; // Bright rim reflection
         } 
         else if (liquid_type == 1) {
             // LAVA: Voronoi cracking, intense core glow
@@ -126,6 +137,11 @@ void fragment() {
             // SLIME: Extremely thick, large bubbles, wide specular
             vec4 volume = mix(vec4(0.1, 0.4, 0.0, 0.98), vec4(0.4, 0.8, 0.1, 0.98), diffuse);
             
+            // Refraction mapping
+            vec2 refracted_uv = SCREEN_UV - normal.xy * 0.06 * z; 
+            vec4 bg_refraction = texture(screen_texture, refracted_uv);
+            volume = mix(bg_refraction * vec4(0.5, 1.0, 0.5, 1.0), volume, 0.7); // Mostly opaque green
+            
             // Big slow bubbles
             float bubble_noise = noise(pos * 0.1 + vec2(0.0, TIME * -3.0));
             if (bubble_noise > 0.8) {
@@ -136,28 +152,38 @@ void fragment() {
             final_color = volume + vec4(0.8, 1.0, 0.8, 0.0) * jelly_spec + vec4(0.2, 0.9, 0.2, 0.0) * fresnel * 0.8;
         }
         else if (liquid_type == 3) {
-            // ACID: Toxic highly emissive glowing yellow-green, fizzing surface
-            vec4 volume = mix(vec4(0.2, 0.8, 0.0, 1.0), vec4(0.8, 1.0, 0.0, 1.0), diffuse);
+            // ACID/NEUTRALIZER: Highly emissive glowing core, fizzing surface
+            vec4 dark_col = vec4(water_color.rgb * 0.3, 1.0);
+            vec4 light_col = vec4(water_color.rgb * 1.2, 1.0);
+            vec4 volume = mix(dark_col, light_col, diffuse);
             
             // Fizzing micro-bubbles
             float fizz = noise(pos * 1.0 + vec2(TIME * 5.0, TIME * 10.0));
+            
+            // Jittery refraction
+            vec2 refracted_uv = SCREEN_UV - normal.xy * 0.05 * z;
+            refracted_uv += vec2(fizz * 0.02); // Distort refraction with fizz
+            vec4 bg_refraction = texture(screen_texture, refracted_uv);
+            
+            volume = mix(bg_refraction * vec4(1.0, 1.5, 0.5, 1.0), volume, 0.6);
+            
             if (fizz > 0.7) {
-                volume = mix(volume, vec4(1.0, 1.0, 0.5, 1.0), 0.8);
+                volume = mix(volume, vec4(1.0, 1.0, 1.0, 1.0), 0.8);
             }
             
             // Blinding toxic neon rim
-            final_color = volume + vec4(1.0, 1.0, 0.0, 0.0) * fresnel * 2.0;
+            final_color = volume + vec4(water_color.rgb, 0.0) * fresnel * 2.0;
             final_color += vec4(1.0, 1.0, 0.8, 0.0) * specular * 1.5;
         }
         else if (liquid_type == 4) {
             // RAINBOW: Iridescent pearlescent color dependent on viewing angle (Fresnel/Z-depth)
-            // Color shifts based on how much it's facing away from the camera
-            float hue = fract((1.0 - z) * 1.5 + TIME * 0.5);
+            // Color shifts based on how much it's facing away from the camera. Highly emissive for Blackout.
+            float hue = fract((1.0 - z) * 1.5 + TIME * 1.5); // Sped up the color shifting
             vec4 pearl = vec4(hue2rgb(hue), 0.95);
             
-            final_color = pearl * (diffuse * 0.8 + 0.2);
+            final_color = pearl; // Ignore diffuse so it glows in the dark
             final_color += vec4(1.0) * specular * 1.5;
-            final_color += vec4(hue2rgb(fract(hue + 0.5)), 0.0) * fresnel * 1.2; // Opposite hue on edge
+            final_color += vec4(hue2rgb(fract(hue + 0.5)), 0.0) * fresnel * 2.0; // Strong glowing edge
         }
         else if (liquid_type == 5) {
             // GALAXY: Deep space, swirling dense nebula, multiple star layers
@@ -184,7 +210,14 @@ void fragment() {
             
             // Environment mapping using the Y and X normal
             float reflection = smoothstep(-0.3, 0.3, normal.y + normal.x * 0.5);
-            final_color = mix(gold_base, gold_light, reflection);
+            
+            // Fake environmental reflection by sampling the screen
+            vec2 refl_uv = SCREEN_UV;
+            refl_uv.y = clamp(1.0 - refl_uv.y, 0.0, 1.0); // Flip Y to fake a mirror reflection
+            refl_uv += normal.xy * 0.1 * z; // Distort with droplet sphere
+            vec4 bg_refl = texture(screen_texture, refl_uv);
+            
+            final_color = mix(gold_base, bg_refl * gold_light, reflection);
             
             // Ultra-sharp anisotropic-like specular
             float metal_spec = pow(max(0.0, dot(normal, half_vector)), 128.0) * 3.0;
@@ -206,7 +239,14 @@ void fragment() {
             float scanline = sin(pos.y * 2.0 - TIME * 30.0);
             if (scanline > 0.8) volume = cyan;
             
-            final_color = volume * (diffuse + 0.4) + cyan * fresnel * 2.0;
+            // Energy distortion (gravitational lensing)
+            vec2 lens_uv = SCREEN_UV - normal.xy * 0.1 * z;
+            if (grid_x * grid_y == 0.0) lens_uv += vec2(0.01, -0.01); 
+            vec4 bg_distortion = texture(screen_texture, lens_uv);
+            
+            volume = mix(volume * (diffuse + 0.4), bg_distortion * cyan, 0.6);
+            
+            final_color = volume + cyan * fresnel * 2.0;
             final_color += vec4(1.0) * specular;
         }
         else if (liquid_type == 8) {
@@ -215,7 +255,14 @@ void fragment() {
             vec4 edge = vec4(1.0, 0.1, 0.0, 1.0);
             
             float plasma = noise(pos * 0.15 + vec2(TIME * -5.0, TIME * 8.0));
-            final_color = mix(edge, core, plasma * (1.0 - dist_sq));
+            vec4 volume = mix(edge, core, plasma * (1.0 - dist_sq));
+            
+            // Plasma lens refraction
+            vec2 lens_uv = SCREEN_UV - normal.xy * 0.08 * z;
+            lens_uv += vec2((plasma - 0.5) * 0.05); // Heat distortion
+            vec4 bg_refraction = texture(screen_texture, lens_uv);
+            
+            final_color = mix(volume, bg_refraction * vec4(1.2, 0.8, 0.2, 1.0), 0.5);
             
             final_color += vec4(1.0, 0.4, 0.0, 0.0) * fresnel * 2.5;
             final_color += vec4(1.0, 1.0, 0.8, 0.0) * specular * 1.5;
@@ -227,7 +274,14 @@ void fragment() {
             
             // Angular facet noise for ice crystals
             float facet = step(0.5, fract(sin(dot(floor(pos * 0.2), vec2(12.9898,78.233))) * 43758.5453));
-            final_color = mix(ice_dark, ice_base, diffuse + facet * 0.3);
+            vec4 volume = mix(ice_dark, ice_base, diffuse + facet * 0.3);
+            
+            // Ice refraction (crystal clear but heavily faceted)
+            vec2 lens_uv = SCREEN_UV - normal.xy * 0.06 * z;
+            lens_uv += vec2(facet * 0.04); // Facets sharply bend light
+            vec4 bg_refraction = texture(screen_texture, lens_uv);
+            
+            final_color = mix(volume, bg_refraction * vec4(0.8, 0.9, 1.0, 1.0), 0.7); // mostly clear ice
             
             float sharp_spec = pow(max(0.0, dot(normal, half_vector)), 128.0) * 2.0;
             final_color += vec4(1.0) * sharp_spec;
@@ -240,7 +294,14 @@ void fragment() {
             
             // Hex grid logic (simple criss-cross)
             float grid = max(step(0.8, fract((pos.x + pos.y) * 0.1)), step(0.8, fract((pos.x - pos.y) * 0.1)));
-            final_color = mix(mag * (diffuse + 0.2), cyan, grid * (sin(TIME * 10.0) * 0.5 + 0.5));
+            vec4 volume = mix(mag * (diffuse + 0.2), cyan, grid * (sin(TIME * 10.0) * 0.5 + 0.5));
+            
+            // Hologram light bending
+            vec2 lens_uv = SCREEN_UV - normal.xy * 0.05 * z;
+            lens_uv += vec2(grid * 0.02); 
+            vec4 bg_refraction = texture(screen_texture, lens_uv);
+            
+            final_color = mix(volume, bg_refraction * mag, 0.5);
             
             final_color += cyan * fresnel * 2.5;
         }
@@ -253,7 +314,18 @@ void fragment() {
             float angle = atan(offset.y, offset.x) + (1.0 - dist_sq) * TIME * 15.0;
             float swirl = sin(angle * 5.0) * 0.5 + 0.5;
             
-            final_color = mix(void_core, void_edge, swirl * dist_sq);
+            vec4 volume = mix(void_core, void_edge, swirl * dist_sq);
+            
+            // Extreme gravitational lensing swirling around the center
+            vec2 swirl_dir = vec2(-offset.y, offset.x);
+            vec2 lens_uv = SCREEN_UV + swirl_dir * 0.15 * dist_sq;
+            lens_uv -= normal.xy * 0.05 * z; // lens
+            vec4 bg_refraction = texture(screen_texture, lens_uv);
+            
+            // Core is black, edge is refracted
+            final_color = mix(void_core, bg_refraction, dist_sq * 0.8);
+            final_color += volume;
+            
             final_color += void_edge * fresnel * 3.0; // Intense glowing ring
         }
         
@@ -263,6 +335,11 @@ void fragment() {
         
         COLOR = clamp(final_color, 0.0, 1.0);
     } else {
-        COLOR = vec4(0.0);
+        vec4 glow = vec4(0.0);
+        if (liquid_type == 3 || liquid_type == 6) {
+            float glow_intensity = smoothstep(0.3, 1.0, total_energy);
+            glow = vec4(water_color.rgb, glow_intensity * 0.6); // 60% opacity max at the edge
+        }
+        COLOR = glow;
     }
 }

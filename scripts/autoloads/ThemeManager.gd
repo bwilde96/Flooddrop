@@ -1,6 +1,10 @@
 extends Node
 
 const THEMES = {
+	"main_menu": {
+		"name": "Main Menu", "price": 0,
+		"drop_color": Color(1, 1, 1, 1), "flood_color": Color(0, 0, 0, 0), "bg_color": Color(0, 0, 0, 1),
+	},
 	"water": {
 		"name": "Water", "price": 0,
 		"drop_color": Color(0.35, 0.78, 0.98, 1.0), "flood_color": Color(0.19, 0.38, 0.84, 0.8), "bg_color": Color(0.10, 0.10, 0.15, 1.0),

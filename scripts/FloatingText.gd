@@ -9,6 +9,7 @@ var _pool: Node = null
 var _tween: Tween = null
 
 func _ready() -> void:
+	z_index = 200
 	if not _pool:
 		start_animation()
 

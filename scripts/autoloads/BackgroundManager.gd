@@ -10,6 +10,7 @@ func _ready() -> void:
 	# The WipeRect covers it temporarily during transitions
 
 var bg_scripts = {
+	"main_menu": "res://scripts/backgrounds/MainMenuBG.gd",
 	"water": "res://scripts/backgrounds/WaterBG.gd",
 	"slime": "res://scripts/backgrounds/SlimeBG.gd",
 	"lava": "res://scripts/backgrounds/LavaBG.gd",
@@ -42,6 +43,12 @@ func _do_wipe_transition(wipe_color: Color, theme_id: String) -> void:
 			if script:
 				var new_bg = script.new()
 				bg_rect.add_child(new_bg)
+				new_bg.anchor_right = 1.0
+				new_bg.anchor_bottom = 1.0
+				new_bg.offset_left = 0
+				new_bg.offset_top = 0
+				new_bg.offset_right = 0
+				new_bg.offset_bottom = 0
 	)
 	# Fade out
 	tween.tween_property(wipe_rect, "modulate:a", 0.0, 0.4).set_delay(0.1)
