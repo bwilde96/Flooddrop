@@ -1541,10 +1541,21 @@ func _draw_lightning(from: Vector2, to: Vector2) -> void:
 
 var turret_base: TextureRect
 var turret_barrel: TextureRect
-var laser_impact_sprite: Sprite2D
+var laser_core: Line2D
 var muzzle_flash: Sprite2D
-var bullet_tex: Texture2D = null
+var laser_impact_sprite: Sprite2D
 var time_since_last_shot: float = 0.0
+
+func _make_transparent(img: Image) -> void:
+	# Lightweight chroma-key for the turret body JPEGs (they have no alpha channel).
+	img.convert(Image.FORMAT_RGBA8)
+	var bg_color = img.get_pixel(0, 0)
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var c = img.get_pixel(x, y)
+			if abs(c.r - bg_color.r) < 0.18 and abs(c.g - bg_color.g) < 0.18 and abs(c.b - bg_color.b) < 0.18:
+				c.a = 0.0
+				img.set_pixel(x, y, c)
 
 func _additive_material() -> CanvasItemMaterial:
 	var m = CanvasItemMaterial.new()
@@ -1552,43 +1563,44 @@ func _additive_material() -> CanvasItemMaterial:
 	return m
 
 func _setup_turret() -> void:
-	# NOTE: positions/scales here are sensible defaults — fine-tune in-editor once you
-	# can see the real PNG art. The art is alpha PNGs (assets/turret/), so no chroma-key.
+	# Body uses the existing turret JPEGs (chroma-keyed). The generated turret/laser art in
+	# the asset library is opaque JPEG with inconsistent backgrounds and no alpha, so it is
+	# NOT usable as clean sprites yet — the beam/flash/impact below are drawn procedurally.
 	turret_base = TextureRect.new()
 	var img_base = Image.new()
-	if img_base.load("res://assets/turret/turret_base.png") == OK:
+	if img_base.load("res://assets/turret_base.jpg") == OK:
+		_make_transparent(img_base)
 		turret_base.texture = ImageTexture.create_from_image(img_base)
-	turret_base.custom_minimum_size = Vector2(110, 110)
-	turret_base.size = Vector2(110, 110)
-	turret_base.position = Vector2(360 - 55, get_screen_bottom() - 120)
+	turret_base.custom_minimum_size = Vector2(80, 80)
+	turret_base.size = Vector2(80, 80)
+	turret_base.position = Vector2(360 - 40, get_screen_bottom() - 100)
+	turret_base.modulate = Color(0.85, 0.85, 0.9, 0.95)
 	turret_base.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	turret_base.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	add_child(turret_base)
 
 	turret_barrel = TextureRect.new()
 	var img_barrel = Image.new()
-	if img_barrel.load("res://assets/turret/turret_barrel.png") == OK:
+	if img_barrel.load("res://assets/turret_barrel.jpg") == OK:
+		_make_transparent(img_barrel)
 		turret_barrel.texture = ImageTexture.create_from_image(img_barrel)
-	turret_barrel.custom_minimum_size = Vector2(44, 96)
-	turret_barrel.size = Vector2(44, 96)
-	turret_barrel.position = Vector2(33, -56)
-	turret_barrel.pivot_offset = Vector2(22, 78) # Rotate around the base of the barrel
+	turret_barrel.custom_minimum_size = Vector2(30, 80)
+	turret_barrel.size = Vector2(30, 80)
+	turret_barrel.position = Vector2(25, -40)
+	turret_barrel.pivot_offset = Vector2(15, 60)
+	turret_barrel.modulate = Color(0.9, 0.9, 0.95, 0.95)
 	turret_barrel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	turret_barrel.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	turret_base.add_child(turret_barrel)
 
 	var muzzle = Marker2D.new()
 	muzzle.name = "Muzzle"
-	muzzle.position = Vector2(22, 0) # Tip of the barrel image
+	muzzle.position = Vector2(15, 0) # Top center of barrel image
 	turret_barrel.add_child(muzzle)
 
-	# Textured, glowing laser beam (additive) instead of a flat red line.
+	# Procedural glowing beam: a wide soft-red glow + a white-hot core, both additive.
 	laser_line = Line2D.new()
-	var beam_img = Image.new()
-	if beam_img.load("res://assets/turret/laser_beam_red.png") == OK:
-		laser_line.texture = ImageTexture.create_from_image(beam_img)
-		laser_line.texture_mode = Line2D.LINE_TEXTURE_STRETCH
-	laser_line.default_color = Color(1.0, 0.55, 0.45, 1.0)
+	laser_line.default_color = Color(1.0, 0.18, 0.12, 0.55)
 	laser_line.width = 26.0
 	laser_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
 	laser_line.end_cap_mode = Line2D.LINE_CAP_ROUND
@@ -1596,26 +1608,29 @@ func _setup_turret() -> void:
 	laser_line.visible = false
 	add_child(laser_line)
 
-	# Impact burst at the hit point.
-	laser_impact_sprite = Sprite2D.new()
-	var impact_img = Image.new()
-	if impact_img.load("res://assets/turret/laser_impact.png") == OK:
-		laser_impact_sprite.texture = ImageTexture.create_from_image(impact_img)
-	laser_impact_sprite.visible = false
-	laser_impact_sprite.material = _additive_material()
-	add_child(laser_impact_sprite)
+	laser_core = Line2D.new()
+	laser_core.default_color = Color(1.0, 0.95, 0.9, 1.0)
+	laser_core.width = 8.0
+	laser_core.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.end_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.material = _additive_material()
+	laser_core.visible = false
+	add_child(laser_core)
 
-	# Muzzle flash at the barrel tip (reuses the impact texture).
+	# Soft radial glow (reused for muzzle flash + impact burst).
+	var soft = _create_soft_particle_texture()
+
 	muzzle_flash = Sprite2D.new()
-	muzzle_flash.texture = laser_impact_sprite.texture
+	muzzle_flash.texture = soft
 	muzzle_flash.visible = false
 	muzzle_flash.material = _additive_material()
 	add_child(muzzle_flash)
 
-	# Cache the gold bullet texture for the passive mini-turret.
-	var bullet_img = Image.new()
-	if bullet_img.load("res://assets/turret/turret_bullet_gold.png") == OK:
-		bullet_tex = ImageTexture.create_from_image(bullet_img)
+	laser_impact_sprite = Sprite2D.new()
+	laser_impact_sprite.texture = soft
+	laser_impact_sprite.visible = false
+	laser_impact_sprite.material = _additive_material()
+	add_child(laser_impact_sprite)
 
 func _process_turret(delta: float) -> void:
 	if not turret_barrel or not is_playing: return
@@ -1624,8 +1639,9 @@ func _process_turret(delta: float) -> void:
 
 	if laser_timer > 0:
 		laser_timer -= delta
-		if laser_timer <= 0 and laser_line:
-			laser_line.visible = false
+		if laser_timer <= 0:
+			if laser_line: laser_line.visible = false
+			if laser_core: laser_core.visible = false
 
 	var target = null
 	var best_d = 800.0
@@ -1638,7 +1654,7 @@ func _process_turret(delta: float) -> void:
 				target = child
 
 	if target:
-		var dir = (target.global_position - (turret_base.global_position + Vector2(55, 30))).normalized()
+		var dir = (target.global_position - (turret_base.global_position + Vector2(40, 20))).normalized()
 		turret_barrel.rotation = dir.angle() + PI / 2.0
 
 		var muzzle_pos = turret_barrel.get_node("Muzzle").global_position
@@ -1647,13 +1663,7 @@ func _process_turret(delta: float) -> void:
 			if time_since_last_shot > 0.05: # Rapid laser
 				time_since_last_shot = 0.0
 				target.set("is_targeted_by_turret", true)
-				if laser_line:
-					laser_line.clear_points()
-					laser_line.add_point(muzzle_pos)
-					laser_line.add_point(target.global_position)
-					laser_line.width = randf_range(22.0, 30.0) # Energetic flicker
-					laser_line.visible = true
-				_show_laser_fx(muzzle_pos, target.global_position)
+				_fire_laser(muzzle_pos, target.global_position)
 				laser_timer = 0.08
 				AudioManager.play_sfx("button")
 				target.pop_by_bomb()
@@ -1665,23 +1675,33 @@ func _process_turret(delta: float) -> void:
 				time_since_last_shot = 0.0
 				_fire_turret_bullet(dir, target, muzzle_pos)
 
-func _show_laser_fx(from: Vector2, to: Vector2) -> void:
-	if muzzle_flash and muzzle_flash.texture:
+func _fire_laser(from: Vector2, to: Vector2) -> void:
+	for ln in [laser_line, laser_core]:
+		if ln:
+			ln.clear_points()
+			ln.add_point(from)
+			ln.add_point(to)
+			ln.visible = true
+	if laser_line:
+		laser_line.width = randf_range(22.0, 30.0) # Energetic flicker
+
+	if muzzle_flash:
 		muzzle_flash.global_position = from
 		muzzle_flash.visible = true
-		muzzle_flash.modulate = Color(1.0, 0.8, 0.6, 1.0)
-		muzzle_flash.scale = Vector2(0.22, 0.22)
+		muzzle_flash.modulate = Color(1.0, 0.5, 0.4, 1.0)
+		muzzle_flash.scale = Vector2(1.4, 1.4)
 		var t1 = create_tween()
-		t1.tween_property(muzzle_flash, "scale", Vector2(0.12, 0.12), 0.1)
+		t1.tween_property(muzzle_flash, "scale", Vector2(0.7, 0.7), 0.1)
 		t1.parallel().tween_property(muzzle_flash, "modulate:a", 0.0, 0.1)
 		t1.tween_callback(_hide_muzzle_flash)
-	if laser_impact_sprite and laser_impact_sprite.texture:
+
+	if laser_impact_sprite:
 		laser_impact_sprite.global_position = to
 		laser_impact_sprite.visible = true
-		laser_impact_sprite.modulate = Color(1.0, 0.7, 0.55, 1.0)
-		laser_impact_sprite.scale = Vector2(0.2, 0.2)
+		laser_impact_sprite.modulate = Color(1.0, 0.6, 0.5, 1.0)
+		laser_impact_sprite.scale = Vector2(1.0, 1.0)
 		var t2 = create_tween()
-		t2.tween_property(laser_impact_sprite, "scale", Vector2(0.4, 0.4), 0.14).set_ease(Tween.EASE_OUT)
+		t2.tween_property(laser_impact_sprite, "scale", Vector2(2.6, 2.6), 0.14).set_ease(Tween.EASE_OUT)
 		t2.parallel().tween_property(laser_impact_sprite, "modulate:a", 0.0, 0.18)
 		t2.tween_callback(_hide_laser_impact)
 
@@ -1693,22 +1713,20 @@ func _hide_laser_impact() -> void:
 
 func _fire_turret_bullet(dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
 	target.set("is_targeted_by_turret", true)
-	var bullet := Sprite2D.new()
-	if bullet_tex:
-		bullet.texture = bullet_tex
-		bullet.scale = Vector2(0.12, 0.12)
-	else:
-		bullet.modulate = Color(1.0, 0.8, 0.2) # Fallback tint if the texture is missing
-	bullet.material = _additive_material()
-	bullet.global_position = muzzle_pos + dir * 12.0
+	var bullet = ColorRect.new()
+	bullet.size = Vector2(10, 26)
+	bullet.color = Color(1.0, 0.85, 0.3)
+	bullet.pivot_offset = Vector2(5, 13)
+	bullet.position = muzzle_pos - Vector2(5, 13) + dir * 10.0
 	bullet.rotation = dir.angle() + PI / 2.0
+	bullet.material = _additive_material()
 	add_child(bullet)
 
 	AudioManager.play_sfx("button")
 
 	var tw = create_tween()
-	var travel_time = bullet.global_position.distance_to(target.global_position) / 1000.0
-	tw.tween_property(bullet, "global_position", target.global_position, travel_time)
+	var travel_time = bullet.position.distance_to(target.global_position) / 1000.0
+	tw.tween_property(bullet, "position", target.global_position, travel_time)
 	tw.tween_callback(func():
 		bullet.queue_free()
 		if target and is_instance_valid(target) and target.state != target.DropState.POPPING and target.state != target.DropState.INACTIVE:

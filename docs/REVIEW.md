@@ -99,18 +99,21 @@ Current implementation (`_setup_turret` Gameplay.gd:1520, `_process_turret` :155
 - Aim origin uses `turret_base.global_position + Vector2(40,20)` while the `Muzzle` Marker2D is
   elsewhere → the beam doesn't start at the visible barrel tip.
 
-**You already have the right assets** in `All_Generated_Game_Assets/` (real alpha PNGs):
-`turret_base`, `turret_barrel`, `turret_adv_base`, `turret_adv_twin_barrel`, `auto_turret`,
-`laser_beam_red`, `laser_beam_blue`, `laser_impact`, `turret_bullet_gold`.
+**⚠️ Asset-format blocker (found while rebuilding this):** the turret/laser art in
+`All_Generated_Game_Assets/` is **opaque JPEG with a `.png` extension** (no alpha), and the
+backgrounds are inconsistent (turret_base on white, barrel on black, beam on grey). It is **not
+usable as clean sprites**. Verified in Godot: JFIF/JPEG, 1024², RGB. This is true of the **whole
+generated library** — see §10.
 
-**Fix plan (rebuild):**
-- Rebuild the turret as a small **Node2D** with `Sprite2D` base + pivoting barrel using the PNGs
-  (delete `_make_transparent` entirely — the PNGs have alpha).
-- Render the beam as a **stretched `laser_beam_red` sprite or a shader'd `Line2D`** from the
-  muzzle to the target, with additive blend + a short width-pulse, a **muzzle flash**, and a
-  **`laser_impact`** sprite at the hit point.
-- Add a brief charge-up tell (telegraph) before the beam for readability and game feel.
-- Anchor the beam origin to the actual `Muzzle` global position so it lines up with the barrel.
+**What was done (procedural):** since the generated art is unusable, the beam/flash/impact are now
+drawn **procedurally** with no art dependency — a wide soft-red glow `Line2D` + a white-hot core
+`Line2D` (both additive, with a width flicker), a soft radial **muzzle flash**, and an expanding
+**impact burst** at the hit point. Big upgrade from the flat 8px red line. The turret body still
+uses the existing `assets/turret_base.jpg` / `turret_barrel.jpg` (chroma-keyed) so it renders.
+**Verified in a headless Godot 4.3 run** (compiles + sets up + fires without errors).
+
+**Still needed:** proper **transparent RGBA PNG** turret art (base, barrel, optional adv/twin
+variants) to replace the chroma-keyed JPEG body — see §10.
 
 ### 2.3 Falling animation smoothness (general)
 - Per-frame `queue_redraw()` + per-frame shader param writes on **every** drop even when nothing
@@ -306,6 +309,13 @@ and **profile on a real device** before building more content (§6).
 ---
 
 ## 10. Assets still needed to generate
+
+> **⚠️ Critical — the whole library is opaque JPEG renamed to `.png` (no alpha channel).**
+> Verified on the turret set: JFIF/JPEG, 1024², RGB, with inconsistent solid backgrounds (white,
+> black, grey). Anything that must sit over the game (drops, bosses, turrets, UI icons, cosmetics)
+> has to be **regenerated as true transparent RGBA PNGs**, or it can't be used as a clean sprite.
+> Fix this at the generation source — it's the single biggest blocker to integrating the library.
+> (Additive glow FX — beams, sparks, impacts — can tolerate a *black* background, but most art can't.)
 
 The current `All_Generated_Game_Assets/` is broad guesswork. Concretely missing / worth
 generating for the work above (and to retire the 38 unidentified `media_*` files):
