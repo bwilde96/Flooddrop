@@ -929,30 +929,64 @@ func _update_flood_visual_smooth_raw(val: float) -> void:
 
 func _trigger_level_up() -> void:
 	var new_level = levels[current_level_index]
-	ThemeManager.equip_theme(new_level.theme) # Actually, ThemeManager will return equipped theme
+	ThemeManager.equip_theme(new_level.theme)
 	var t = ThemeManager.get_theme(new_level.theme)
-	ThemeManager.equip_theme(new_level.theme) # Make sure it's globally equipped
-	
+
 	event_triggered_for_level = false
 	if active_event != "chaos":
 		active_event = ""
 		event_timer = 0.0
-	
-	level_up_label.text = "LEVEL %d - %s" % [current_level_index + 1, t.name.to_upper()]
-	
+
+	var is_first = (current_level_index == 0)
+
+	# --- Bold "new environment" reveal ---
+	level_up_label.text = "LEVEL %d\n%s" % [current_level_index + 1, t.name.to_upper()]
+	level_up_label.add_theme_font_size_override("font_size", 60)
+	level_up_label.add_theme_color_override("font_color", t.drop_color.lightened(0.3))
+	level_up_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	level_up_label.add_theme_constant_override("outline_size", 14)
+	level_up_label.pivot_offset = level_up_label.size / 2.0
+	level_up_label.scale = Vector2(0.4, 0.4)
+	level_up_label.modulate = Color(2.0, 2.0, 2.0, 0.0) # Bright + invisible to start
+
 	var tween = create_tween()
-	tween.tween_property(level_up_label, "modulate:a", 1.0, 0.5)
-	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
-	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
-	
+	tween.tween_property(level_up_label, "modulate", Color(1.2, 1.2, 1.2, 1.0), 0.25)
+	tween.parallel().tween_property(level_up_label, "scale", Vector2(1.15, 1.15), 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.15)
+	tween.tween_interval(1.4)
+	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.6)
+
 	var old_theme = levels[max(0, current_level_index - 1)].theme
 	BackgroundManager.update_background(old_theme, levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/bottom_color", t.flood_color, 2.0)
 	flood_rect.material.set_shader_parameter("liquid_type", t.get("shader_type", 0))
-	
-	AudioManager.play_sfx("power_up")
+
+	if is_first:
+		AudioManager.play_sfx("power_up")
+		return
+
+	# --- Celebration: reaching a new depth should feel like an event ---
+	AudioManager.play_sfx("rainbow")
+	AudioManager.vibrate("rainbow")
+	shake_intensity = screen_shake_strength * 1.5
+	trigger_hit_pause(0.06)
+
+	# Theme-coloured screen flash
+	event_overlay.color = t.drop_color
+	event_overlay.modulate.a = 0.55
+	var flash = create_tween()
+	flash.tween_property(event_overlay, "modulate:a", 0.0, 0.6)
+
+	# Burst of light at the centre + a tangible "you went deeper" reward
+	var cx = get_viewport().get_visible_rect().size.x / 2.0
+	var center = Vector2(cx, (get_screen_top() + get_screen_bottom()) / 2.0)
+	_spawn_particle(center, t.drop_color, false, true)
+	var depth_bonus = current_level_index * 250
+	GameManager.score += depth_bonus
+	_spawn_floating_text("NEW DEPTH!  +%d" % depth_bonus, center + Vector2(0, 90), t.drop_color.lightened(0.4))
+	update_hud()
 
 func _start_event(title: String, duration: float, internal_name: String, color: Color = Color.WHITE) -> void:
 	active_event = internal_name
