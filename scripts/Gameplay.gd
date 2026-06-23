@@ -389,9 +389,8 @@ func _ready() -> void:
 	multiplier_label.offset_bottom = -10
 	multiplier_container.add_child(multiplier_label)
 	
-	if OS.has_feature("editor"):
-		debug_panel.visible = true
-	
+	debug_panel.visible = OS.has_feature("editor")
+
 
 	
 	evaporation_particles = CPUParticles2D.new()
@@ -1539,23 +1538,12 @@ func _draw_lightning(from: Vector2, to: Vector2) -> void:
 	tw.tween_property(line, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(line.queue_free)
 
-var turret_base: TextureRect
-var turret_barrel: TextureRect
+var turret_base: Node2D
+var turret_barrel: Node2D
 var laser_core: Line2D
 var muzzle_flash: Sprite2D
 var laser_impact_sprite: Sprite2D
 var time_since_last_shot: float = 0.0
-
-func _make_transparent(img: Image) -> void:
-	# Lightweight chroma-key for the turret body JPEGs (they have no alpha channel).
-	img.convert(Image.FORMAT_RGBA8)
-	var bg_color = img.get_pixel(0, 0)
-	for y in range(img.get_height()):
-		for x in range(img.get_width()):
-			var c = img.get_pixel(x, y)
-			if abs(c.r - bg_color.r) < 0.18 and abs(c.g - bg_color.g) < 0.18 and abs(c.b - bg_color.b) < 0.18:
-				c.a = 0.0
-				img.set_pixel(x, y, c)
 
 func _additive_material() -> CanvasItemMaterial:
 	var m = CanvasItemMaterial.new()
@@ -1563,45 +1551,65 @@ func _additive_material() -> CanvasItemMaterial:
 	return m
 
 func _setup_turret() -> void:
-	# Body uses the existing turret JPEGs (chroma-keyed). The generated turret/laser art in
-	# the asset library is opaque JPEG with inconsistent backgrounds and no alpha, so it is
-	# NOT usable as clean sprites yet — the beam/flash/impact below are drawn procedurally.
-	turret_base = TextureRect.new()
-	var img_base = Image.new()
-	if img_base.load("res://assets/turret_base.jpg") == OK:
-		_make_transparent(img_base)
-		turret_base.texture = ImageTexture.create_from_image(img_base)
-	turret_base.custom_minimum_size = Vector2(80, 80)
-	turret_base.size = Vector2(80, 80)
-	turret_base.position = Vector2(360 - 40, get_screen_bottom() - 100)
-	turret_base.modulate = Color(0.85, 0.85, 0.9, 0.95)
-	turret_base.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_base.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Procedural neon turret. The generated turret art is opaque JPEG (no alpha) and
+	# unusable as a sprite, so the body is drawn from primitives and the beam is procedural.
+	var accent := Color(0.2, 0.9, 1.0) # neon cyan rim
+
+	turret_base = Node2D.new()
+	turret_base.position = Vector2(360, get_screen_bottom() - 150)
+	turret_base.scale = Vector2(1.3, 1.3)
+	turret_base.z_index = 8 # Render above the rising flood
 	add_child(turret_base)
 
-	turret_barrel = TextureRect.new()
-	var img_barrel = Image.new()
-	if img_barrel.load("res://assets/turret_barrel.jpg") == OK:
-		_make_transparent(img_barrel)
-		turret_barrel.texture = ImageTexture.create_from_image(img_barrel)
-	turret_barrel.custom_minimum_size = Vector2(30, 80)
-	turret_barrel.size = Vector2(30, 80)
-	turret_barrel.position = Vector2(25, -40)
-	turret_barrel.pivot_offset = Vector2(15, 60)
-	turret_barrel.modulate = Color(0.9, 0.9, 0.95, 0.95)
-	turret_barrel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_barrel.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Base housing (trapezoid) + glowing rim.
+	var base_body = Polygon2D.new()
+	base_body.polygon = PackedVector2Array([Vector2(-46, 34), Vector2(46, 34), Vector2(34, -12), Vector2(-34, -12)])
+	base_body.color = Color(0.10, 0.12, 0.16)
+	turret_base.add_child(base_body)
+
+	var rim = Line2D.new()
+	rim.points = PackedVector2Array([Vector2(-46, 34), Vector2(-34, -12), Vector2(34, -12), Vector2(46, 34)])
+	rim.width = 4.0
+	rim.default_color = accent
+	rim.material = _additive_material()
+	turret_base.add_child(rim)
+
+	# Rotating hub dome.
+	var hub = Polygon2D.new()
+	var hub_pts = PackedVector2Array()
+	for i in range(18):
+		var a = TAU * i / 18.0
+		hub_pts.append(Vector2(cos(a), sin(a)) * 17.0 + Vector2(0, -12))
+	hub.polygon = hub_pts
+	hub.color = Color(0.16, 0.18, 0.22)
+	turret_base.add_child(hub)
+
+	# Barrel (rotates to aim). Points up (-Y) at rotation 0.
+	turret_barrel = Node2D.new()
+	turret_barrel.position = Vector2(0, -12)
 	turret_base.add_child(turret_barrel)
+
+	var barrel_body = Polygon2D.new()
+	barrel_body.polygon = PackedVector2Array([Vector2(-10, 6), Vector2(10, 6), Vector2(8, -64), Vector2(-8, -64)])
+	barrel_body.color = Color(0.14, 0.16, 0.20)
+	turret_barrel.add_child(barrel_body)
+
+	var barrel_glow = Line2D.new()
+	barrel_glow.points = PackedVector2Array([Vector2(0, 2), Vector2(0, -62)])
+	barrel_glow.width = 3.0
+	barrel_glow.default_color = Color(1.0, 0.4, 0.3)
+	barrel_glow.material = _additive_material()
+	turret_barrel.add_child(barrel_glow)
 
 	var muzzle = Marker2D.new()
 	muzzle.name = "Muzzle"
-	muzzle.position = Vector2(15, 0) # Top center of barrel image
+	muzzle.position = Vector2(0, -64) # Barrel tip
 	turret_barrel.add_child(muzzle)
 
-	# Procedural glowing beam: a wide soft-red glow + a white-hot core, both additive.
+	# Procedural glowing beam: wide soft-red glow + a warm bright core, both additive.
 	laser_line = Line2D.new()
-	laser_line.default_color = Color(1.0, 0.18, 0.12, 0.55)
-	laser_line.width = 26.0
+	laser_line.default_color = Color(1.0, 0.12, 0.06, 0.7)
+	laser_line.width = 30.0
 	laser_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
 	laser_line.end_cap_mode = Line2D.LINE_CAP_ROUND
 	laser_line.material = _additive_material()
@@ -1609,7 +1617,7 @@ func _setup_turret() -> void:
 	add_child(laser_line)
 
 	laser_core = Line2D.new()
-	laser_core.default_color = Color(1.0, 0.95, 0.9, 1.0)
+	laser_core.default_color = Color(1.0, 0.55, 0.4, 1.0)
 	laser_core.width = 8.0
 	laser_core.begin_cap_mode = Line2D.LINE_CAP_ROUND
 	laser_core.end_cap_mode = Line2D.LINE_CAP_ROUND
@@ -1617,7 +1625,6 @@ func _setup_turret() -> void:
 	laser_core.visible = false
 	add_child(laser_core)
 
-	# Soft radial glow (reused for muzzle flash + impact burst).
 	var soft = _create_soft_particle_texture()
 
 	muzzle_flash = Sprite2D.new()
@@ -1654,7 +1661,7 @@ func _process_turret(delta: float) -> void:
 				target = child
 
 	if target:
-		var dir = (target.global_position - (turret_base.global_position + Vector2(40, 20))).normalized()
+		var dir = (target.global_position - turret_barrel.global_position).normalized()
 		turret_barrel.rotation = dir.angle() + PI / 2.0
 
 		var muzzle_pos = turret_barrel.get_node("Muzzle").global_position
@@ -1683,13 +1690,13 @@ func _fire_laser(from: Vector2, to: Vector2) -> void:
 			ln.add_point(to)
 			ln.visible = true
 	if laser_line:
-		laser_line.width = randf_range(22.0, 30.0) # Energetic flicker
+		laser_line.width = randf_range(26.0, 34.0) # Energetic flicker
 
 	if muzzle_flash:
 		muzzle_flash.global_position = from
 		muzzle_flash.visible = true
-		muzzle_flash.modulate = Color(1.0, 0.5, 0.4, 1.0)
-		muzzle_flash.scale = Vector2(1.4, 1.4)
+		muzzle_flash.modulate = Color(1.0, 0.5, 0.35, 1.0)
+		muzzle_flash.scale = Vector2(1.5, 1.5)
 		var t1 = create_tween()
 		t1.tween_property(muzzle_flash, "scale", Vector2(0.7, 0.7), 0.1)
 		t1.parallel().tween_property(muzzle_flash, "modulate:a", 0.0, 0.1)
@@ -1698,10 +1705,10 @@ func _fire_laser(from: Vector2, to: Vector2) -> void:
 	if laser_impact_sprite:
 		laser_impact_sprite.global_position = to
 		laser_impact_sprite.visible = true
-		laser_impact_sprite.modulate = Color(1.0, 0.6, 0.5, 1.0)
+		laser_impact_sprite.modulate = Color(1.0, 0.55, 0.45, 1.0)
 		laser_impact_sprite.scale = Vector2(1.0, 1.0)
 		var t2 = create_tween()
-		t2.tween_property(laser_impact_sprite, "scale", Vector2(2.6, 2.6), 0.14).set_ease(Tween.EASE_OUT)
+		t2.tween_property(laser_impact_sprite, "scale", Vector2(2.8, 2.8), 0.14).set_ease(Tween.EASE_OUT)
 		t2.parallel().tween_property(laser_impact_sprite, "modulate:a", 0.0, 0.18)
 		t2.tween_callback(_hide_laser_impact)
 
