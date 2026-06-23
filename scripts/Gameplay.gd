@@ -413,16 +413,24 @@ func _ready() -> void:
 	add_child(evaporation_particles)
 	
 	tidal_wave_rect = ColorRect.new()
-	tidal_wave_rect.color = Color(0.2, 0.6, 1.0, 0.7)
+	tidal_wave_rect.color = Color(1.0, 1.0, 1.0, 1.0) # The shader provides the colour
 	tidal_wave_rect.size = Vector2(720, 1500) # Ensure it covers the whole screen bottom
 	tidal_wave_rect.position = Vector2(0, get_screen_bottom())
 	tidal_wave_rect.visible = false
 	tidal_wave_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The beautiful animated ocean-wave shader (was sitting unused in assets/).
+	var wave_shader = load("res://assets/crashing_wave.gdshader")
+	if wave_shader:
+		var wave_mat = ShaderMaterial.new()
+		wave_mat.shader = wave_shader
+		tidal_wave_rect.material = wave_mat
 	add_child(tidal_wave_rect)
 	
 	tidal_wave_particles = CPUParticles2D.new()
 	tidal_wave_particles.emitting = false
-	tidal_wave_particles.amount = 300
+	# Subtle foam spray only — the wave shader carries the look now. (Was 300 bright
+	# particles that the bloom turned into blocky white squares.)
+	tidal_wave_particles.amount = 70
 	tidal_wave_particles.lifetime = 0.5
 	tidal_wave_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
 	tidal_wave_particles.emission_rect_extents = Vector2(360, 10)
@@ -431,9 +439,9 @@ func _ready() -> void:
 	tidal_wave_particles.spread = 45.0
 	tidal_wave_particles.initial_velocity_min = 200.0
 	tidal_wave_particles.initial_velocity_max = 500.0
-	tidal_wave_particles.scale_amount_min = 0.2
-	tidal_wave_particles.scale_amount_max = 0.5
-	tidal_wave_particles.color = Color(0.8, 0.9, 1.0, 0.8)
+	tidal_wave_particles.scale_amount_min = 0.12
+	tidal_wave_particles.scale_amount_max = 0.32
+	tidal_wave_particles.color = Color(0.85, 0.93, 1.0, 0.35)
 	tidal_wave_rect.add_child(tidal_wave_particles)
 	
 	midas_overlay = ColorRect.new()
