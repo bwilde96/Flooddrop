@@ -6,6 +6,7 @@ uniform vec4 water_color : source_color = vec4(0.35, 0.78, 0.98, 1.0);
 uniform float anchor_multiplier = 1.0;
 uniform int liquid_type = 0; // 0=Water, 1=Lava, 2=Slime, 3=Acid, 4=Rainbow, 5=Galaxy, 6=Gold, 7=Neon Plasma
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear;
+uniform bool is_slime_shape = false;
 
 // Simple random function
 float rand(vec2 co) {
@@ -58,19 +59,28 @@ void fragment() {
     float dx_drop = pos.x - 60.0;
     float dy_drop = pos.y - drop_y;
     
-    if (liquid_type == 7) {
+    float stretch = 120.0;
+    if (liquid_type == 2 || is_slime_shape) {
+        // Slime: Heavy, bulbous, gelatinous sphere
+        stretch = 180.0; // Very gentle sag, keeps it mostly round
+        
+        // Heavy, slow rolling jiggle
+        dx_drop += sin(pos.y * 0.08 - TIME * 6.0) * 2.5;
+        dy_drop += cos(pos.x * 0.1 + TIME * 4.0) * 1.5;
+    }
+    else if (liquid_type == 7) {
         dx_drop += sin(pos.y * 0.5 + TIME * 15.0) * 2.0; // Cyberpunk Glitch
     }
     
     // Smooth egg shape deformation
-    float width_mod = 1.0 + (dy_drop / 120.0);
+    float width_mod = 1.0 + (dy_drop / stretch);
     dx_drop /= max(0.1, width_mod);
     
-    // Ceiling anchor
-    float dx_anchor = max(0.0, abs(pos.x - 60.0) - 30.0);
-    float dy_anchor = max(0.0, pos.y - 0.0) * 2.5; 
+    // Smooth dome ceiling anchor
+    float dx_anchor = (pos.x - 60.0) * 0.7;
+    float dy_anchor = max(0.0, pos.y) * 2.0; 
     float distSq_anchor = dx_anchor * dx_anchor + dy_anchor * dy_anchor;
-    float e1 = (200.0 / (distSq_anchor + 0.1)) * anchor_multiplier;
+    float e1 = (300.0 / (distSq_anchor + 0.1)) * anchor_multiplier;
     
     // Falling drop energy
     float distSq_drop = dx_drop * dx_drop + dy_drop * dy_drop;
@@ -80,14 +90,21 @@ void fragment() {
     if (total_energy > 1.0) {
         vec4 base_color = water_color;
         
-        vec2 offset = vec2(dx_drop, dy_drop) / drop_radius;
+        // Drop normal
+        float safe_radius = max(0.1, drop_radius);
+        vec2 offset = vec2(dx_drop, dy_drop) / safe_radius;
         float dist_sq = clamp(dot(offset, offset), 0.0, 1.0);
-        float z = sqrt(1.0 - dist_sq);
-        vec3 normal = normalize(vec3(offset.x, offset.y, z));
+        float z_drop = sqrt(1.0 - dist_sq);
+        vec3 normal_drop = vec3(offset.x, offset.y, z_drop);
         
-        if (e1 > e2) {
-            normal = normalize(vec3(pos.x - 60.0, -20.0, z * 20.0));
-        }
+        // Anchor normal (mathematically correct ellipsoid gradient)
+        float nx_anchor_n = dx_anchor / 17.32; // sqrt(300)
+        float ny_anchor_n = dy_anchor / 17.32;
+        float nz_anchor_n = sqrt(max(0.0, 1.0 - nx_anchor_n*nx_anchor_n - ny_anchor_n*ny_anchor_n));
+        vec3 normal_anchor = normalize(vec3(nx_anchor_n * 0.7, ny_anchor_n * 2.0, nz_anchor_n));
+        
+        vec3 normal = normalize(normal_drop * e2 + normal_anchor * e1);
+        float z = normal.z;
         
         vec3 light_dir = normalize(vec3(-0.6, -0.8, 1.0));
         vec3 view_dir = vec3(0.0, 0.0, 1.0);
@@ -101,55 +118,67 @@ void fragment() {
         
         if (liquid_type == 0) {
             // WATER: True Optical Refraction Lens
-            // Use the 3D surface normal and depth (z) to refract the screen texture
             vec2 refracted_uv = SCREEN_UV - normal.xy * 0.08 * z; 
             vec4 bg_refraction = texture(screen_texture, refracted_uv);
             
-            // Mix the refracted background with the droplet's intended tint (e.g. blue for normal, red for bomb)
             vec4 tint = vec4(water_color.rgb, 1.0);
-            
-            // It is clearest at the center, tint gets stronger at the edges (fresnel)
             vec4 volume = mix(bg_refraction, tint, 0.2 + fresnel * 0.5);
             
-            // Add a sharp inner shadow (caustic focus) at the bottom
             float inner_shadow = smoothstep(0.0, 0.5, -normal.y - normal.x * 0.5) * 0.4;
             
             final_color = volume - vec4(inner_shadow);
-            final_color += vec4(1.0) * specular * 3.0; // Extremely sharp glass specular
-            final_color += vec4(1.0) * fresnel * 0.8; // Bright rim reflection
+            final_color += vec4(1.0) * specular * 3.0;
+            final_color += vec4(1.0) * fresnel * 0.8;
         } 
         else if (liquid_type == 1) {
             // LAVA: Voronoi cracking, intense core glow
-            vec4 core_color = vec4(1.0, 0.8, 0.0, 1.0); // Bright molten yellow
-            vec4 crust_color = vec4(0.1, 0.0, 0.0, 1.0); // Pitch black/red rock
+            vec4 core_color = vec4(1.0, 0.8, 0.0, 1.0);
+            vec4 crust_color = vec4(0.1, 0.0, 0.0, 1.0);
             
             float v = voronoi(pos * 0.15 + vec2(0.0, TIME * -0.5));
-            // v is close to 1.0 at the edges of the cells
             float cracks = smoothstep(0.7, 0.9, v);
             
             final_color = mix(crust_color, core_color, cracks);
-            // Edges glow orange from heat
             final_color += vec4(1.0, 0.3, 0.0, 0.0) * fresnel * 1.5; 
-            // Dim rough specular
             final_color += vec4(1.0, 0.5, 0.2, 0.0) * pow(max(0.0, dot(normal, half_vector)), 4.0) * 0.2;
         }
         else if (liquid_type == 2) {
-            // SLIME: Extremely thick, large bubbles, wide specular
-            vec4 volume = mix(vec4(0.1, 0.4, 0.0, 0.98), vec4(0.4, 0.8, 0.1, 0.98), diffuse);
+            // SLIME: Bulbous ooze with suspended toxic bubbles
+            vec4 core_color = vec4(0.02, 0.15, 0.0, 0.98); // Dark, dense internal fluid
+            vec4 edge_color = vec4(0.4, 0.95, 0.15, 0.85); // Bright, toxic translucent edge
             
-            // Refraction mapping
-            vec2 refracted_uv = SCREEN_UV - normal.xy * 0.06 * z; 
+            // Depth-based scattering (z = 1 at center, 0 at edge)
+            float depth = pow(z, 1.5);
+            vec4 base_volume = mix(edge_color, core_color, depth);
+            
+            // Generate slow moving cellular bubbles inside the slime
+            float v = voronoi(pos * 0.05 + vec2(sin(TIME * 0.5), TIME * -1.5));
+            // Create soft "nuclei" or bubbles from the voronoi noise
+            float bubbles = smoothstep(0.3, 0.8, 1.0 - v); 
+            
+            // Bubbles are only visible deep inside the slime (z > 0.4)
+            vec4 bubble_color = vec4(0.6, 1.0, 0.2, 1.0);
+            vec4 volume = mix(base_volume, bubble_color, bubbles * smoothstep(0.4, 1.0, z) * 0.8);
+            
+            // Soft rim illumination from ambient diffuse
+            volume = mix(volume, vec4(0.6, 1.0, 0.3, 1.0), diffuse * 0.4);
+            
+            // Slime refraction (distorts heavily because it's thick jelly)
+            vec2 refracted_uv = SCREEN_UV - normal.xy * 0.07 * z; 
             vec4 bg_refraction = texture(screen_texture, refracted_uv);
-            volume = mix(bg_refraction * vec4(0.5, 1.0, 0.5, 1.0), volume, 0.7); // Mostly opaque green
+            volume = mix(bg_refraction * vec4(0.7, 1.0, 0.5, 1.0), volume, 0.85);
             
-            // Big slow bubbles
-            float bubble_noise = noise(pos * 0.1 + vec2(0.0, TIME * -3.0));
-            if (bubble_noise > 0.8) {
-                volume = mix(volume, vec4(0.6, 1.0, 0.3, 1.0), 0.8);
-            }
-            // Wide jelly specular
-            float jelly_spec = pow(max(0.0, dot(normal, half_vector)), 12.0) * 1.0;
-            final_color = volume + vec4(0.8, 1.0, 0.8, 0.0) * jelly_spec + vec4(0.2, 0.9, 0.2, 0.0) * fresnel * 0.8;
+            // Oily double specular
+            float jelly_spec_broad = pow(max(0.0, dot(normal, half_vector)), 16.0) * 0.6;
+            float jelly_spec_sharp = pow(max(0.0, dot(normal, half_vector)), 128.0) * 2.0;
+            
+            // Backlit subsurface scattering glow
+            float sss = pow(max(0.0, dot(normal, -light_dir)), 3.0) * 0.6;
+            
+            final_color = volume;
+            final_color += vec4(0.5, 1.0, 0.2, 0.0) * sss;
+            final_color += vec4(0.9, 1.0, 0.9, 0.0) * (jelly_spec_broad + jelly_spec_sharp);
+            final_color += vec4(0.4, 1.0, 0.4, 0.0) * fresnel * 0.8;
         }
         else if (liquid_type == 3) {
             // ACID/NEUTRALIZER: Highly emissive glowing core, fizzing surface

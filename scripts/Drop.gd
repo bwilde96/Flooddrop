@@ -160,11 +160,9 @@ func _ready() -> void:
 	c_mat.shader = preload("res://assets/spinning_coin.gdshader")
 	coin_rect.material = c_mat
 	coin_rect.hide()
-	visuals.add_child(coin_rect)
-	
-	if collision_shape.shape is CircleShape2D:
-		collision_shape.shape.radius = drop_radius * 2.5
 	fluid_rect.material = fluid_rect.material.duplicate()
+	
+	visuals.add_child(coin_rect)
 
 func on_pool_activate(pool: Node) -> void:
 	_pool = pool
@@ -204,23 +202,22 @@ func on_pool_activate(pool: Node) -> void:
 		_tween.kill()
 	
 	var actual_duration = spawn_formation_duration * theme_cache.get("form_mult", 1.0)
-	
-	# Start as a tiny blob on the ceiling
-	fluid_rect.material.set_shader_parameter("drop_y", 25.0)
-	fluid_rect.material.set_shader_parameter("drop_radius", 5.0)
-	fluid_rect.material.set_shader_parameter("anchor_multiplier", 1.0)
-	
 	var s_type = theme_cache.get("shader_type", 0)
 	var final_radius = 32.0 * size_m
 	var final_y = 50.0
 	
 	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
 		final_radius = 45.0 * size_m
-		final_y = 35.0
+		final_y = 50.0
 	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
 		final_radius = 28.0 * size_m
 		final_y = 70.0
-		
+	
+	# Start as a tiny blob on the ceiling
+	fluid_rect.material.set_shader_parameter("drop_y", 25.0)
+	fluid_rect.material.set_shader_parameter("drop_radius", 5.0)
+	fluid_rect.material.set_shader_parameter("anchor_multiplier", 1.0)
+	
 	_tween = create_tween()
 	_tween.set_parallel(true)
 	# Phase 1: Build mass
@@ -243,6 +240,13 @@ func on_pool_activate(pool: Node) -> void:
 		
 		# Fade out the anchor during the final moments of Phase 2 so it detaches naturally
 		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.1).set_delay(actual_duration * 0.4)
+		
+		# Start falling EXACTLY as the tail detaches so it doesn't hang in the air!
+		_tween.tween_callback(func():
+			if state == DropState.FORMING:
+				state = DropState.FALLING
+				collision_shape.set_deferred("disabled", false)
+		).set_delay(actual_duration * 0.4)
 	
 	_tween.chain().tween_callback(func():
 		if state == DropState.FORMING:
@@ -298,7 +302,21 @@ func _process(delta: float) -> void:
 		
 	if type != DropType.NORMAL and type != DropType.GOLD:
 		queue_redraw()
-	if state != DropState.FALLING: return
+		
+	var s_type = theme_cache.get("shader_type", 0) if theme_cache else 0
+	
+	if state != DropState.FALLING:
+		if state == DropState.FORMING and s_type == 0:
+			# Water forms pre-stretched based on its terminal fall speed
+			var pre_terminal_speed = fall_speed * (theme_cache.get("speed_mult", 1.0) if theme_cache else 1.0)
+			var pre_speed_stretch = clamp(pre_terminal_speed / 1000.0, 0.0, 0.6)
+			
+			var pre_wobble_amp = 0.04
+			var pre_time_sec = Time.get_ticks_msec() / 1000.0
+			var pre_wobble_x = sin(pre_time_sec * 15.0 + get_instance_id()) * pre_wobble_amp
+			var pre_wobble_y = cos(pre_time_sec * 15.0 + get_instance_id()) * pre_wobble_amp
+			visuals.scale = Vector2(1.0 + pre_wobble_x - (pre_speed_stretch * 0.5), 1.0 + pre_wobble_y + pre_speed_stretch) * custom_scale_mult
+		return
 	
 	var multiplier = 1.0
 	if gameplay_ref and gameplay_ref.has_method("get_freeze_multiplier"):
@@ -311,7 +329,6 @@ func _process(delta: float) -> void:
 	elif icon_label:
 		icon_label.scale.x = 1.0
 		
-	var s_type = theme_cache.get("shader_type", 0)
 	var current_speed = fall_speed * theme_cache.get("speed_mult", 1.0)
 	
 	if is_eruption or fall_velocity < current_speed:
@@ -357,7 +374,7 @@ func _process(delta: float) -> void:
 			if gameplay_ref and gameplay_ref.has_method("_spawn_particle"):
 				gameplay_ref._spawn_particle(position + Vector2(randf_range(-40.0, 40.0), randf_range(-40.0, 40.0)), Color(1.0, 1.0, 0.5))
 				
-	# Add watery wobble as it falls
+	# Add watery wobble and physical stretch as it falls
 	var wobble_amp = 0.04
 	if s_type == 2: wobble_amp = 0.12 # Slime wobbles a lot
 	elif s_type == 1: wobble_amp = 0.01 # Lava wobbles very little
@@ -365,7 +382,14 @@ func _process(delta: float) -> void:
 	var time_sec = Time.get_ticks_msec() / 1000.0
 	var wobble_x = sin(time_sec * 15.0 + get_instance_id()) * wobble_amp
 	var wobble_y = cos(time_sec * 15.0 + get_instance_id()) * wobble_amp
-	visuals.scale = Vector2(1.0 + wobble_x, 1.0 + wobble_y) * custom_scale_mult
+	
+	# Only water (s_type == 0) stretches. Others retain original round shape.
+	var speed_stretch = 0.0
+	if s_type == 0:
+		var terminal_speed = fall_speed * (theme_cache.get("speed_mult", 1.0) if theme_cache else 1.0)
+		speed_stretch = clamp(terminal_speed / 1000.0, 0.0, 0.6)
+		
+	visuals.scale = Vector2(1.0 + wobble_x - (speed_stretch * 0.5), 1.0 + wobble_y + speed_stretch) * custom_scale_mult
 	
 	if position.y > screen_bottom and current_speed > 0.0:
 		if s_type == 2 and bounce_count < 3:
@@ -510,7 +534,8 @@ func _play_pop_animation() -> void:
 	
 	_tween = create_tween()
 	_tween.set_parallel(true)
-	_tween.tween_property(visuals, "scale", Vector2(1.5, 1.5), pop_duration).set_ease(Tween.EASE_OUT)
+	# Intense Squash and Stretch pop!
+	_tween.tween_property(visuals, "scale", Vector2(2.5 * custom_scale_mult, 0.1 * custom_scale_mult), pop_duration).set_ease(Tween.EASE_OUT)
 	_tween.tween_property(self, "modulate:a", 0.0, pop_duration).set_ease(Tween.EASE_OUT)
 	_tween.chain().tween_callback(func():
 		if _pool: _pool.return_drop(self)

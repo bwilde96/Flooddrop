@@ -72,6 +72,20 @@ var spawn_timer: float = 0.0
 var last_spawn_x: float = -1000.0
 var next_available_fall_time: float = 0.0
 
+var current_streak: float = 0.0
+var current_multiplier: int = 1
+var multiplier_label: Label
+var multiplier_bar: ColorRect
+var multiplier_container: Control
+
+var multiplier_color_map = {
+	1: Color(1.0, 1.0, 1.0),
+	2: Color(0.3, 0.8, 1.0),
+	3: Color(0.8, 0.3, 1.0),
+	4: Color(1.0, 0.8, 0.2),
+	5: Color(1.0, 0.3, 0.3)
+}
+
 var current_power_up_chance: float = 0.0
 var freeze_timer: float = 0.0
 var shield_charges: int = 0
@@ -90,11 +104,15 @@ var midas_particles: CPUParticles2D
 
 var is_turret_active: bool = false
 var turret_timer: float = 0.0
+var laser_line: Line2D
+var laser_timer: float = 0.0
 
 var evaporation_particles: CPUParticles2D
 
 var is_tidal_wave_active: bool = false
 var tidal_wave_y: float = 1280.0
+
+var owned_passives: Array = []
 
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
@@ -153,12 +171,80 @@ var pool_manager: PoolManager
 var freeze_particles: CPUParticles2D
 var shake_intensity: float = 0.0
 
+func _increment_streak(amount: float = 1.0) -> void:
+	if "streak_accelerator" in owned_passives:
+		amount *= 1.25
+		
+	current_streak += amount
+	var old_mult = current_multiplier
+	var target_progress = 0.0
+	
+	if current_streak >= 100:
+		current_multiplier = 5
+		target_progress = 1.0
+	elif current_streak >= 50:
+		current_multiplier = 4
+		target_progress = float(current_streak - 50) / 50.0
+	elif current_streak >= 25:
+		current_multiplier = 3
+		target_progress = float(current_streak - 25) / 25.0
+	elif current_streak >= 10:
+		current_multiplier = 2
+		target_progress = float(current_streak - 10) / 15.0
+	else:
+		current_multiplier = 1
+		target_progress = float(current_streak) / 10.0
+		
+	if multiplier_bar and multiplier_bar.material:
+		var mat = multiplier_bar.material as ShaderMaterial
+		var tw = create_tween()
+		tw.tween_method(func(v): mat.set_shader_parameter("progress", v), mat.get_shader_parameter("progress"), target_progress, 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+		
+	if current_multiplier > old_mult:
+		_trigger_multiplier_level_up()
+	else:
+		_pulse_multiplier_ui()
+
+func _reset_streak() -> void:
+	if current_streak == 0.0: return
+	current_streak = 0.0
+	current_multiplier = 1
+	
+	if multiplier_label:
+		multiplier_label.text = "1x"
+		multiplier_label.add_theme_color_override("font_color", multiplier_color_map[1])
+	if multiplier_bar and multiplier_bar.material:
+		var mat = multiplier_bar.material as ShaderMaterial
+		mat.set_shader_parameter("progress", 0.0)
+		mat.set_shader_parameter("fg_color", multiplier_color_map[1])
+		_pulse_multiplier_ui()
+
+func _trigger_multiplier_level_up() -> void:
+	AudioManager.play_sfx("power_up")
+	var m_color = multiplier_color_map[current_multiplier]
+	multiplier_label.text = "%dx" % current_multiplier
+	multiplier_label.add_theme_color_override("font_color", m_color)
+	
+	var mat = multiplier_bar.material as ShaderMaterial
+	mat.set_shader_parameter("fg_color", m_color)
+	
+	multiplier_container.scale = Vector2(1.5, 1.5)
+	var tw = create_tween()
+	tw.tween_property(multiplier_container, "scale", Vector2(1.0, 1.0), 0.5).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+	_spawn_particle(multiplier_container.global_position + Vector2(100, 50), m_color, false, true)
+
+func _pulse_multiplier_ui() -> void:
+	if not multiplier_container: return
+	multiplier_container.scale = Vector2(1.1, 1.1)
+	var tw = create_tween()
+	tw.tween_property(multiplier_container, "scale", Vector2(1.0, 1.0), 0.2).set_ease(Tween.EASE_OUT)
+
 func _ready() -> void:
 	current_spawn_interval = base_spawn_interval
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
-	BackgroundManager.update_background(levels[current_level_index].theme)
+	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
 	
 	freeze_timer = 0.0
 	shield_charges = 0
@@ -187,6 +273,12 @@ func _ready() -> void:
 	active_ability = SaveManager.get_value("equipped_ability", "time_warp")
 	_setup_ability_ui()
 	
+	owned_passives = SaveManager.get_value("owned_passives", [])
+	if "mini_turret" in owned_passives or active_ability == "auto_turret":
+		_setup_turret()
+		if not ("mini_turret" in owned_passives):
+			turret_base.visible = false
+		
 	var ups = SaveManager.get_value("upgrades", {})
 	shield_charges = ups.get("shield_capacity", 1) - 1 # Level 1 = 0 extra charges
 	_update_powerup_hud()
@@ -201,6 +293,101 @@ func _ready() -> void:
 		get_tree().paused = false
 		GameManager.goto_main_menu()
 	)
+	
+	# Setup Multiplier UI dynamically
+	var score_margin = game_ui.get_node("MarginContainer")
+	var hbox = score_margin.get_node("HBox")
+	
+	var ui_vbox = VBoxContainer.new()
+	ui_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ui_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_vbox.add_theme_constant_override("separation", 10)
+	
+	score_margin.remove_child(hbox)
+	score_margin.add_child(ui_vbox)
+	ui_vbox.add_child(hbox)
+	
+	multiplier_container = Control.new()
+	multiplier_container.custom_minimum_size = Vector2(198, 108)
+	multiplier_container.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	multiplier_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_vbox.add_child(multiplier_container)
+	
+	var dev_panel = get_node_or_null("HUD/DebugPanel")
+	if dev_panel:
+		dev_panel.position.y += 120
+	
+	var arc_shader = Shader.new()
+	arc_shader.code = """
+	shader_type canvas_item;
+	uniform float progress : hint_range(0.0, 1.0) = 0.5;
+	uniform vec4 bg_color : source_color = vec4(0.1, 0.1, 0.1, 0.5);
+	uniform vec4 fg_color : source_color = vec4(1.0, 0.8, 0.2, 1.0);
+	uniform float thickness = 0.22;
+
+	void fragment() {
+		vec2 pos = vec2(UV.x * 2.2 - 1.1, UV.y * 1.2 - 1.1);
+		float r = 1.0 - thickness * 0.5;
+		float d = length(pos);
+		float a = atan(pos.y, pos.x);
+		
+		float dist_to_arc = abs(d - r);
+		vec2 left_cap = vec2(-r, 0.0);
+		vec2 right_cap = vec2(r, 0.0);
+		
+		float final_dist = 0.0;
+		if (pos.y > 0.0) {
+			final_dist = min(length(pos - left_cap), length(pos - right_cap));
+		} else {
+			final_dist = dist_to_arc;
+		}
+		
+		float alpha = 1.0 - smoothstep(thickness * 0.5 - 0.02, thickness * 0.5 + 0.01, final_dist);
+		float target_angle = mix(-3.14159265, 0.0, progress);
+		vec2 prog_point = vec2(r * cos(target_angle), r * sin(target_angle));
+		
+		float fill_alpha = 0.0;
+		float prog_dist = length(pos - prog_point);
+		
+		if (pos.y > 0.0) {
+			if (pos.x < 0.0) { fill_alpha = smoothstep(0.0, 0.01, progress); }
+			else { fill_alpha = smoothstep(0.99, 1.0, progress); }
+		} else {
+			if (a <= target_angle) { fill_alpha = 1.0; }
+			else { fill_alpha = 1.0 - smoothstep(thickness * 0.5 - 0.02, thickness * 0.5 + 0.01, prog_dist); }
+		}
+		
+		float juicy = 1.0 - (final_dist / (thickness * 0.5));
+		juicy = smoothstep(0.1, 1.0, juicy);
+		
+		vec4 base_c = mix(bg_color, fg_color, fill_alpha);
+		vec4 final_color = base_c + (fg_color * juicy * fill_alpha * 0.9);
+		
+		float tip_glow = 1.0 - smoothstep(0.0, thickness * 1.5, prog_dist);
+		final_color += fg_color * tip_glow * 1.2 * fill_alpha;
+		
+		COLOR = vec4(final_color.rgb, final_color.a * alpha);
+	}
+	"""
+	var arc_mat = ShaderMaterial.new()
+	arc_mat.shader = arc_shader
+	arc_mat.set_shader_parameter("progress", 0.0)
+	arc_mat.set_shader_parameter("fg_color", multiplier_color_map[1])
+	
+	multiplier_bar = ColorRect.new()
+	multiplier_bar.material = arc_mat
+	multiplier_bar.set_anchors_preset(Control.PRESET_FULL_RECT)
+	multiplier_container.add_child(multiplier_bar)
+	
+	multiplier_label = Label.new()
+	multiplier_label.text = "1x"
+	multiplier_label.add_theme_font_size_override("font_size", 40)
+	multiplier_label.add_theme_color_override("font_color", multiplier_color_map[1])
+	multiplier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	multiplier_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	multiplier_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	multiplier_label.offset_bottom = -10
+	multiplier_container.add_child(multiplier_label)
 	
 	if OS.has_feature("editor"):
 		debug_panel.visible = true
@@ -510,7 +697,17 @@ func get_freeze_multiplier() -> float:
 	return freeze_slow_multiplier if freeze_timer > 0 else 1.0
 
 func _process(delta: float) -> void:
+	if turret_base and turret_base.visible:
+		_process_turret(delta)
+		
 	if get_tree().paused: return
+	
+	if is_turret_active:
+		turret_timer -= delta
+		if turret_timer <= 0:
+			is_turret_active = false
+			if not ("mini_turret" in owned_passives) and turret_base:
+				turret_base.visible = false
 	
 	if is_playing and not get_tree().paused:
 		GameManager.survival_time += delta
@@ -624,18 +821,7 @@ func _process(delta: float) -> void:
 				tidal_wave_rect.visible = false
 				tidal_wave_particles.emitting = false
 		
-		if is_turret_active:
-			turret_timer -= delta
-			if turret_timer <= 0:
-				is_turret_active = false
-			else:
-				# Auto fire laser bullets at low drops
-				for d in drop_container.get_children():
-					if d.has_method("pop") and "state" in d and d.state == d.DropState.FALLING and "is_targeted_by_turret" in d and not d.is_targeted_by_turret:
-						if d.position.y > get_screen_bottom() - 300.0: # Increased range
-							d.is_targeted_by_turret = true
-							_fire_laser_bullet(d)
-							break # Fire one per frame max
+		# Turret timer logic moved to top of process
 		
 		if ability_cooldown < ability_cooldown_max:
 			is_ability_ready = false
@@ -669,37 +855,7 @@ func _process(delta: float) -> void:
 	if debug_panel.visible:
 		update_debug_ui()
 
-func _fire_laser_bullet(target: Node) -> void:
-	AudioManager.play_sfx("button") # Will replace with real laser sfx later
-	var bullet = ColorRect.new()
-	bullet.color = Color(1.0, 0.2, 0.2, 1.0)
-	bullet.size = Vector2(8, 40)
-	bullet.pivot_offset = Vector2(4, 20)
-	var start_pos = Vector2(360, get_screen_bottom())
-	bullet.position = start_pos - bullet.pivot_offset
-	
-	# Glow effect
-	var mat = CanvasItemMaterial.new()
-	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	bullet.material = mat
-	
-	var dir = (target.position - start_pos).normalized()
-	bullet.rotation = dir.angle() + PI/2.0
-	
-	add_child(bullet)
-	
-	var dist = start_pos.distance_to(target.position)
-	var speed = 3000.0
-	var travel_time = dist / speed
-	
-	var tw = create_tween()
-	tw.tween_property(bullet, "position", target.position - bullet.pivot_offset, travel_time)
-	tw.tween_callback(func():
-		bullet.queue_free()
-		if is_instance_valid(target) and target.has_method("pop_by_bomb") and target.state == target.DropState.FALLING:
-			target.pop_by_bomb()
-			_spawn_particle(target.position, Color(1.0, 0.2, 0.2), false, true) # Red explosion
-	)
+
 
 func _use_ability() -> void:
 	if not is_playing or get_tree().paused: return
@@ -760,6 +916,8 @@ func _use_ability() -> void:
 	elif active_ability == "auto_turret":
 		is_turret_active = true
 		turret_timer = 4.0
+		if turret_base:
+			turret_base.visible = true
 
 func _update_flood_visual_smooth_raw(val: float) -> void:
 	if not flood_rect: return
@@ -787,7 +945,8 @@ func _trigger_level_up() -> void:
 	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
 	
-	BackgroundManager.update_background(levels[current_level_index].theme)
+	var old_theme = levels[max(0, current_level_index - 1)].theme
+	BackgroundManager.update_background(old_theme, levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/bottom_color", t.flood_color, 2.0)
@@ -1037,29 +1196,62 @@ func _pick_random_powerup() -> int:
 	if roll < weight_bomb: return 3 # BOMB
 	return 4 # SHIELD
 
+func trigger_hit_pause(duration: float = 0.05) -> void:
+	Engine.time_scale = 0.0
+	get_tree().create_timer(duration, true, false, true).timeout.connect(func():
+		Engine.time_scale = 1.0
+	)
+
 func _on_drop_popped(drop_node: Area2D) -> void:
 	var t = drop_node.type
 	var pos = drop_node.position
 	var base_score = int(drop_node.score_value * ThemeManager.get_equipped_theme().get("score_mult", 1.0))
 	
+	if "score_boost" in owned_passives:
+		base_score += 2
+		
+	var is_juicy = false
+	if "juicy_drops" in owned_passives and t == drop_node.DropType.NORMAL and randf() < 0.1:
+		is_juicy = true
+		base_score *= 2
+	
+	var has_toxic_immunity = "toxic_immunity" in owned_passives
+	
+	if t != drop_node.DropType.ACID or has_toxic_immunity:
+		_increment_streak(2.0 if is_juicy else 1.0)
+		
+	if "chain_lightning" in owned_passives and randf() < 0.05:
+		call_deferred("_trigger_chain_lightning", pos, 3)
+		
+	var mult = current_multiplier
+	var mult_text = ""
+	var m_color = multiplier_color_map.get(mult, Color(1,1,1))
+	if mult > 1:
+		mult_text = " x%d" % mult
+		
+	var final_score = base_score * mult
+	var pitch = 1.0 + min(0.5, current_streak * 0.005)
+	
 	match t:
 		drop_node.DropType.NORMAL:
-			GameManager.score += base_score
-			_spawn_floating_text("+%d" % base_score, pos, Color(1, 1, 1))
+			GameManager.score += final_score
+			_spawn_floating_text("+%d%s" % [final_score, mult_text], pos, m_color)
 			_spawn_particle(pos, drop_node.get_current_color())
-			AudioManager.play_sfx("pop")
+			AudioManager.play_sfx("pop", pitch)
 			AudioManager.vibrate("pop")
 		drop_node.DropType.GOLD:
-			var gold_score = base_score * 5
+			var gold_score = final_score * 5
 			GameManager.score += gold_score
-			_spawn_floating_text("+%d GOLD!" % gold_score, pos, Color(1.0, 0.9, 0.2))
+			_spawn_floating_text("+%d GOLD!%s" % [gold_score, mult_text], pos, m_color)
 			_spawn_particle(pos, drop_node.get_current_color())
-			AudioManager.play_sfx("pop")
+			AudioManager.play_sfx("pop", pitch)
 			AudioManager.vibrate("pop")
+			shake_intensity = screen_shake_strength * 0.8
+			trigger_hit_pause(0.04)
 		drop_node.DropType.DRAIN:
 			current_flood = max(0.0, current_flood - drain_amount)
-			GameManager.score += base_score
-			_spawn_floating_text("DRAIN!", pos)
+			GameManager.score += final_score
+			_spawn_floating_text("DRAIN!%s" % mult_text, pos, m_color)
 			_update_flood_visual_smooth(0.0)
 			_spawn_particle(pos, Color(0.2, 0.8, 0.2, 1.0))
 			AudioManager.play_sfx("power_up")
@@ -1068,30 +1260,33 @@ func _on_drop_popped(drop_node: Area2D) -> void:
 		drop_node.DropType.FREEZE:
 			freeze_timer = freeze_duration
 			freeze_overlay.visible = true
-			GameManager.score += base_score
-			_spawn_floating_text("FREEZE!", pos)
+			GameManager.score += final_score
+			_spawn_floating_text("FREEZE!%s" % mult_text, pos, m_color)
 			_spawn_particle(pos, Color(0.8, 0.95, 1.0, 1.0))
 			AudioManager.play_sfx("power_up")
 			AudioManager.vibrate("pop")
 		drop_node.DropType.BOMB:
 			_trigger_bomb(pos)
-			GameManager.score += base_score
-			_spawn_floating_text("BOOM!", pos)
+			GameManager.score += final_score
+			_spawn_floating_text("BOOM!%s" % mult_text, pos, m_color)
 			_spawn_particle(pos, Color(0.9, 0.2, 0.1, 1.0), true)
 			AudioManager.play_sfx("bomb")
 			AudioManager.vibrate("bomb")
+			shake_intensity = screen_shake_strength * 2.5
+			trigger_hit_pause(0.08)
 		drop_node.DropType.SHIELD:
 			shield_charges += shield_charges_per_pickup
-			GameManager.score += base_score
-			_spawn_floating_text("SHIELD x%d" % shield_charges_per_pickup, pos)
+			GameManager.score += final_score
+			_spawn_floating_text("SHIELD x%d%s" % [shield_charges_per_pickup, mult_text], pos, m_color)
 			_update_powerup_hud()
 			_spawn_particle(pos, Color(0.4, 0.4, 0.9, 1.0))
 			AudioManager.play_sfx("power_up")
 			AudioManager.vibrate("pop")
 		drop_node.DropType.RAINBOW:
-			GameManager.score += rainbow_bonus_score
+			var rb_score = rainbow_bonus_score * mult
+			GameManager.score += rb_score
 			current_flood = max(0.0, current_flood - rainbow_flood_reduction)
-			_spawn_floating_text("RAINBOW +%d" % rainbow_bonus_score, pos)
+			_spawn_floating_text("RAINBOW +%d%s" % [rb_score, mult_text], pos, m_color)
 			_update_flood_visual_smooth(0.0)
 			_spawn_particle(pos, Color.WHITE, false, true)
 			AudioManager.play_sfx("rainbow")
@@ -1099,24 +1294,27 @@ func _on_drop_popped(drop_node: Area2D) -> void:
 			if active_event == "prismatic" or active_event == "chaos_prismatic":
 				illuminate_blackout()
 		drop_node.DropType.METEOR:
-			var m_score = base_score * 5
+			var m_score = final_score * 5
 			GameManager.score += m_score
-			_spawn_floating_text("+%d MASSIVE!" % m_score, pos, Color(0.2, 1.0, 0.2))
+			_spawn_floating_text("+%d MASSIVE!%s" % [m_score, mult_text], pos, m_color)
 			_spawn_particle(pos, drop_node.get_current_color(), true)
 			AudioManager.play_sfx("bomb")
 			AudioManager.vibrate("bomb")
-			shake_intensity = screen_shake_strength * 3.0 # Huge shake!
+			shake_intensity = screen_shake_strength * 3.0
+			trigger_hit_pause(0.06)
 		drop_node.DropType.NEUTRALIZER:
 			current_flood = max(0.0, current_flood - 35.0)
-			_spawn_floating_text("NEUTRALIZED!", pos, Color(0.8, 1.0, 1.0))
+			_spawn_floating_text("NEUTRALIZED!%s" % mult_text, pos, m_color)
 			_spawn_particle(pos, drop_node.get_current_color())
 			AudioManager.play_sfx("power_up")
 			_update_flood_visual_smooth(0.0)
 		drop_node.DropType.ACID:
-			_spawn_floating_text("TOXIC!", pos, Color(0.8, 1.0, 0.1))
+			var toxic_score = final_score * 5
+			GameManager.score += toxic_score
+			_spawn_floating_text("+%d TOXIC!%s" % [toxic_score, mult_text], pos, Color(0.8, 1.0, 0.1))
 			_spawn_particle(pos, drop_node.get_current_color())
 			AudioManager.play_sfx("miss")
-			_on_drop_missed(drop_node.flood_damage * 1.5) # Penalty!
+			_on_drop_missed(drop_node.flood_damage * 1.5, not has_toxic_immunity)
 			
 	update_hud()
 
@@ -1129,7 +1327,7 @@ func _trigger_bomb(center: Vector2) -> void:
 					GameManager.score += child.score_value
 					_spawn_floating_text("+%d" % child.score_value, child.position)
 
-func _on_drop_missed(flood_value: float) -> void:
+func _on_drop_missed(flood_value: float, break_streak: bool = true) -> void:
 	if shield_charges > 0:
 		shield_charges -= 1
 		_update_powerup_hud()
@@ -1137,8 +1335,12 @@ func _on_drop_missed(flood_value: float) -> void:
 		AudioManager.vibrate("pop")
 		return
 		
+	if break_streak:
+		_reset_streak()
+		
 	current_flood += flood_value
 	shake_intensity = screen_shake_strength
+	trigger_hit_pause(0.05)
 	
 	AudioManager.play_sfx("miss")
 	AudioManager.vibrate("miss")
@@ -1256,3 +1458,171 @@ func illuminate_blackout() -> void:
 	blackout_rect.modulate.a = 0.0
 	_illuminate_tween = create_tween()
 	_illuminate_tween.tween_property(blackout_rect, "modulate:a", 1.0, 2.0).set_delay(2.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+
+func _trigger_chain_lightning(start_pos: Vector2, remaining_jumps: int) -> void:
+	if remaining_jumps <= 0: return
+	
+	var best_dist = 400.0
+	var best_drop = null
+	
+	for child in drop_container.get_children():
+		if child.has_method("pop_by_bomb") and child.state != child.DropState.INACTIVE and child.state != child.DropState.POPPING:
+			var d = child.global_position.distance_to(start_pos)
+			if d > 10.0 and d < best_dist:
+				best_dist = d
+				best_drop = child
+				
+	if best_drop:
+		_draw_lightning(start_pos, best_drop.global_position)
+		best_drop.pop_by_bomb()
+		GameManager.score += best_drop.score_value
+		_spawn_floating_text("+%d CHAIN!" % best_drop.score_value, best_drop.position, Color(0.2, 0.8, 1.0))
+		AudioManager.play_sfx("pop", 1.5)
+		
+		get_tree().create_timer(0.15).timeout.connect(func():
+			_trigger_chain_lightning(best_drop.global_position, remaining_jumps - 1)
+		)
+
+func _draw_lightning(from: Vector2, to: Vector2) -> void:
+	var line = Line2D.new()
+	line.default_color = Color(0.2, 0.8, 1.0, 0.8)
+	line.width = 8.0
+	line.add_point(from)
+	
+	var steps = 5
+	var dist = from.distance_to(to)
+	var dir = (to - from).normalized()
+	for i in range(1, steps):
+		var p = from + dir * (dist * float(i)/steps)
+		p += Vector2(randf_range(-30, 30), randf_range(-30, 30))
+		line.add_point(p)
+		
+	line.add_point(to)
+	add_child(line)
+	var tw = create_tween()
+	tw.tween_property(line, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(line.queue_free)
+
+var turret_base: TextureRect
+var turret_barrel: TextureRect
+var time_since_last_shot: float = 0.0
+
+func _make_transparent(img: Image) -> void:
+	img.convert(Image.FORMAT_RGBA8)
+	var bg_color = img.get_pixel(0, 0)
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var c = img.get_pixel(x, y)
+			if abs(c.r - bg_color.r) < 0.15 and abs(c.g - bg_color.g) < 0.15 and abs(c.b - bg_color.b) < 0.15:
+				c.a = 0.0
+				img.set_pixel(x, y, c)
+
+func _setup_turret() -> void:
+	turret_base = TextureRect.new()
+	var img_base = Image.new()
+	if img_base.load("res://assets/turret_base.jpg") == OK:
+		_make_transparent(img_base)
+		turret_base.texture = ImageTexture.create_from_image(img_base)
+	turret_base.custom_minimum_size = Vector2(80, 80)
+	turret_base.size = Vector2(80, 80)
+	turret_base.position = Vector2(360 - 40, get_screen_bottom() - 100)
+	turret_base.modulate = Color(0.8, 0.8, 0.8, 0.8)
+	turret_base.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	turret_base.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	add_child(turret_base)
+	
+	turret_barrel = TextureRect.new()
+	var img_barrel = Image.new()
+	if img_barrel.load("res://assets/turret_barrel.jpg") == OK:
+		_make_transparent(img_barrel)
+		turret_barrel.texture = ImageTexture.create_from_image(img_barrel)
+	turret_barrel.custom_minimum_size = Vector2(30, 80)
+	turret_barrel.size = Vector2(30, 80)
+	turret_barrel.position = Vector2(25, -40)
+	turret_barrel.pivot_offset = Vector2(15, 60)
+	turret_barrel.modulate = Color(0.9, 0.9, 0.9, 0.9)
+	turret_barrel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	turret_barrel.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	turret_base.add_child(turret_barrel)
+	
+	var muzzle = Marker2D.new()
+	muzzle.name = "Muzzle"
+	muzzle.position = Vector2(15, 0) # Top center of barrel image
+	turret_barrel.add_child(muzzle)
+	
+	laser_line = Line2D.new()
+	laser_line.default_color = Color(1.0, 0.2, 0.2, 0.8)
+	laser_line.width = 8.0
+	laser_line.visible = false
+	add_child(laser_line)
+	
+func _process_turret(delta: float) -> void:
+	if not turret_barrel or not is_playing: return
+	
+	time_since_last_shot += delta
+	
+	if laser_timer > 0:
+		laser_timer -= delta
+		if laser_timer <= 0 and laser_line:
+			laser_line.visible = false
+			
+	var target = null
+	var best_d = 800.0
+	
+	for child in drop_container.get_children():
+		if child.has_method("pop_by_bomb") and child.state != child.DropState.INACTIVE and child.state != child.DropState.POPPING and not child.get("is_targeted_by_turret"):
+			var d = child.global_position.distance_to(turret_base.global_position)
+			if d < best_d and child.position.y < turret_base.global_position.y:
+				best_d = d
+				target = child
+				
+	if target:
+		var dir = (target.global_position - (turret_base.global_position + Vector2(40, 20))).normalized()
+		turret_barrel.rotation = dir.angle() + PI/2.0
+		
+		var muzzle_pos = turret_barrel.get_node("Muzzle").global_position
+		
+		if is_turret_active:
+			if time_since_last_shot > 0.05: # Fast laser beam!
+				time_since_last_shot = 0.0
+				target.set("is_targeted_by_turret", true)
+				if laser_line:
+					laser_line.clear_points()
+					laser_line.add_point(muzzle_pos)
+					laser_line.add_point(target.global_position)
+					laser_line.visible = true
+				laser_timer = 0.1
+				AudioManager.play_sfx("button")
+				target.pop_by_bomb()
+				GameManager.score += target.score_value
+				_spawn_floating_text("+%d LASER!" % target.score_value, target.position, Color(1.0, 0.2, 0.2))
+		else:
+			var fire_rate = 3.0
+			if time_since_last_shot > fire_rate:
+				time_since_last_shot = 0.0
+				_fire_turret_bullet(dir, target, muzzle_pos)
+			
+func _fire_turret_bullet(dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
+	target.set("is_targeted_by_turret", true)
+	var bullet = ColorRect.new()
+	bullet.size = Vector2(8, 24)
+	bullet.color = Color(1.0, 0.8, 0.2)
+	bullet.position = muzzle_pos - Vector2(4, 12) + dir * 10.0
+	bullet.pivot_offset = Vector2(4, 12)
+	bullet.rotation = dir.angle() + PI/2.0
+	add_child(bullet)
+	
+	AudioManager.play_sfx("button")
+	
+	var tw = create_tween()
+	var travel_time = bullet.position.distance_to(target.global_position) / 1000.0
+	tw.tween_property(bullet, "position", target.global_position, travel_time)
+	tw.tween_callback(func():
+		bullet.queue_free()
+		if target and is_instance_valid(target) and target.state != target.DropState.POPPING and target.state != target.DropState.INACTIVE:
+			if target.has_method("pop_by_bomb"):
+				target.pop_by_bomb()
+				GameManager.score += target.score_value
+				_spawn_floating_text("+%d TURRET!" % target.score_value, target.position, Color(1.0, 0.8, 0.2))
+				AudioManager.play_sfx("pop")
+	)

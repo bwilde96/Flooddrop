@@ -45,18 +45,20 @@ func _apply_volumes() -> void:
 	for p in sfx_players:
 		p.volume_db = db
 
-func play_sfx(sfx_name: String) -> void:
+func play_sfx(sfx_name: String, pitch: float = 1.0) -> void:
 	if sfx_volume < 0.01: return
 	if not sounds.has(sfx_name): return
 	
 	for p in sfx_players:
 		if not p.playing:
 			p.stream = sounds[sfx_name]
+			p.pitch_scale = pitch
 			p.play()
 			return
 			
 	# If all playing, override the oldest (index 0)
 	sfx_players[0].stream = sounds[sfx_name]
+	sfx_players[0].pitch_scale = pitch
 	sfx_players[0].play()
 
 func vibrate(type: String) -> void:

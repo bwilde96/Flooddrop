@@ -94,6 +94,30 @@ func validate_save(data: Dictionary) -> bool:
 	if "time_warp" not in clean_abilities:
 		clean_abilities.append("time_warp")
 	data["unlocked_abilities"] = clean_abilities
+	
+	if not data.has("unlocked_passives") or typeof(data["unlocked_passives"]) != TYPE_ARRAY:
+		data["unlocked_passives"] = ["score_boost", "magnetic_tap"]
+		
+	if not data.has("owned_passives") or typeof(data["owned_passives"]) != TYPE_ARRAY:
+		data["owned_passives"] = []
+		
+	var valid_passives = ["score_boost", "magnetic_tap", "streak_accelerator", "juicy_drops", "toxic_immunity", "mini_turret", "chain_lightning"]
+	
+	var clean_unlocked_passives = []
+	for p in data["unlocked_passives"]:
+		if typeof(p) == TYPE_STRING and (p in valid_passives) and not (p in clean_unlocked_passives):
+			clean_unlocked_passives.append(p)
+	if "score_boost" not in clean_unlocked_passives:
+		clean_unlocked_passives.append("score_boost")
+	if "magnetic_tap" not in clean_unlocked_passives:
+		clean_unlocked_passives.append("magnetic_tap")
+	data["unlocked_passives"] = clean_unlocked_passives
+	
+	var clean_owned_passives = []
+	for p in data["owned_passives"]:
+		if typeof(p) == TYPE_STRING and (p in valid_passives) and not (p in clean_owned_passives):
+			clean_owned_passives.append(p)
+	data["owned_passives"] = clean_owned_passives
 		
 	if not data.has("settings") or typeof(data["settings"]) != TYPE_DICTIONARY:
 		data["settings"] = {
@@ -125,6 +149,8 @@ func reset_to_default() -> void:
 		},
 		"unlocked_abilities": ["time_warp"],
 		"equipped_ability": "time_warp",
+		"unlocked_passives": ["score_boost", "magnetic_tap"],
+		"owned_passives": [],
 		"settings": {
 			"sfx_volume": 1.0,
 			"bgm_volume": 0.8,

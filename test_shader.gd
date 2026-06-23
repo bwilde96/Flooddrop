@@ -3,7 +3,7 @@ extends SceneTree
 func _init():
     var shader = load("res://assets/crashing_wave.gdshader")
     if shader:
-        print("SHADER LOADED SUCCESSFULLY!")
+        print("Shader loaded successfully!")
     else:
-        print("FAILED TO LOAD SHADER!")
+        print("Failed to load shader!")
     quit()
