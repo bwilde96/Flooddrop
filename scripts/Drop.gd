@@ -89,7 +89,11 @@ func apply_stats() -> void:
 	icon_label.position.x = -60
 		
 	if collision_shape and collision_shape.shape is CircleShape2D:
-		collision_shape.shape.radius = drop_radius * 2.5
+		var tap_mult := 2.5
+		# Magnetic Tap passive: widen the hit area so taps are more forgiving.
+		if gameplay_ref and "magnetic_tap" in gameplay_ref.owned_passives:
+			tap_mult = 3.25
+		collision_shape.shape.radius = drop_radius * tap_mult
 	visuals.scale = Vector2.ONE * custom_scale_mult
 var gameplay_ref: Node = null
 var tap_health: int = 1
