@@ -1136,14 +1136,16 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.is_pinata = false
 		
 	var current_time = Time.get_ticks_msec() / 1000.0
-	var requested_formation = randf_range(0.8, 3.5)
+	# Tighter, snappier formation: drops drip and fall quickly instead of hanging at the
+	# ceiling for up to 3.5s (which read as sticky/unresponsive on the water level).
+	var requested_formation = randf_range(0.45, 1.1)
 	var proposed_fall_time = current_time + requested_formation
 	
 	if proposed_fall_time < next_available_fall_time:
 		proposed_fall_time = next_available_fall_time
 		requested_formation = proposed_fall_time - current_time
 		
-	next_available_fall_time = proposed_fall_time + 0.35 # Enforce at least 0.35s gap between drops falling
+	next_available_fall_time = proposed_fall_time + 0.2 # Small gap between drops falling (was 0.35, felt over-metered)
 	
 	# Pass the exact formation duration to the drop
 	drop.spawn_formation_duration = requested_formation
@@ -1570,7 +1572,7 @@ func _process_turret(delta: float) -> void:
 	var best_d = 800.0
 	
 	for child in drop_container.get_children():
-		if child.has_method("pop_by_bomb") and child.state != child.DropState.INACTIVE and child.state != child.DropState.POPPING and not child.get("is_targeted_by_turret"):
+		if child.has_method("pop_by_bomb") and child.state == child.DropState.FALLING and not child.get("is_targeted_by_turret"):
 			var d = child.global_position.distance_to(turret_base.global_position)
 			if d < best_d and child.position.y < turret_base.global_position.y:
 				best_d = d

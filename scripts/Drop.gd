@@ -120,6 +120,10 @@ var _tween: Tween = null
 var theme_cache: Dictionary = {}
 var bounce_count: int = 0
 var fall_velocity: float = 0.0
+# Velocity-based slime bounce (replaces a position tween that fought _process each frame)
+const BOUNCE_GRAVITY := 3000.0
+var is_bouncing: bool = false
+var bounce_vel_y: float = 0.0
 
 var tex_drop_base = null
 var tex_drop_high = null
@@ -169,13 +173,17 @@ func on_pool_activate(pool: Node) -> void:
 	state = DropState.FORMING
 	visible = true
 	modulate.a = 1.0
-	collision_shape.set_deferred("disabled", true)
+	# Enable the hit area immediately so drops are tappable WHILE forming.
+	# (Previously disabled until FALLING, which made fresh drops feel unresponsive.)
+	collision_shape.set_deferred("disabled", false)
 	_disconnect_all(popped)
 	_disconnect_all(missed)
 	type = DropType.NORMAL
 	
 	theme_cache = ThemeManager.get_equipped_theme()
 	bounce_count = 0
+	is_bouncing = false
+	bounce_vel_y = 0.0
 	fall_velocity = fall_speed
 	custom_scale_mult = 1.0
 	is_eruption = false
@@ -241,12 +249,8 @@ func on_pool_activate(pool: Node) -> void:
 		# Fade out the anchor during the final moments of Phase 2 so it detaches naturally
 		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.1).set_delay(actual_duration * 0.4)
 		
-		# Start falling EXACTLY as the tail detaches so it doesn't hang in the air!
-		_tween.tween_callback(func():
-			if state == DropState.FORMING:
-				state = DropState.FALLING
-				collision_shape.set_deferred("disabled", false)
-		).set_delay(actual_duration * 0.4)
+		# Falling begins on the single chained callback below, exactly when the drip
+		# (drop_y) and anchor finish — a seam-free hand-off with no double-move at release.
 	
 	_tween.chain().tween_callback(func():
 		if state == DropState.FORMING:
@@ -346,8 +350,13 @@ func _process(delta: float) -> void:
 		else:
 			current_speed *= 0.1
 			
-	position.y += current_speed * multiplier * delta
-	
+	if is_bouncing:
+		# Slime bounce arc: integrate our own gravity, not the terminal fall speed.
+		bounce_vel_y += BOUNCE_GRAVITY * multiplier * delta
+		position.y += bounce_vel_y * multiplier * delta
+	else:
+		position.y += current_speed * multiplier * delta
+
 	if bounce_velocity_x != 0.0:
 		position.x += bounce_velocity_x * multiplier * delta
 		if position.x < 60.0:
@@ -395,15 +404,15 @@ func _process(delta: float) -> void:
 		if s_type == 2 and bounce_count < 3:
 			bounce_count += 1
 			position.y = screen_bottom - 10.0
-			
-			var bounce_height = 0.0
-			if bounce_count == 1: bounce_height = 800.0
-			elif bounce_count == 2: bounce_height = 500.0
-			elif bounce_count == 3: bounce_height = 200.0
-			
-			var bounce_tween = create_tween()
-			bounce_tween.tween_property(self, "position:y", screen_bottom - bounce_height, 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-			bounce_tween.tween_property(self, "position:y", screen_bottom + 50.0, 0.4).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+
+			# Launch upward; BOUNCE_GRAVITY in _process brings it back down for the next bounce.
+			var bounce_speed = 0.0
+			if bounce_count == 1: bounce_speed = 2100.0
+			elif bounce_count == 2: bounce_speed = 1500.0
+			else: bounce_speed = 950.0
+
+			is_bouncing = true
+			bounce_vel_y = -bounce_speed
 			missed.emit(flood_damage * 0.1) # Small penalty for bouncing
 		else:
 			if is_pinata:
@@ -429,7 +438,8 @@ func _process(delta: float) -> void:
 				queue_free()
 
 func _input_event(_viewport: Viewport, event: InputEvent, _shape_idx: int) -> void:
-	if state != DropState.FALLING: return
+	# Tappable while still FORMING too, so fresh drops never feel unresponsive.
+	if state != DropState.FALLING and state != DropState.FORMING: return
 	if event is InputEventScreenTouch or event is InputEventMouseButton:
 		if event.is_pressed():
 			pop()
