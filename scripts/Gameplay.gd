@@ -244,8 +244,9 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
+	_setup_glow()
 	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
-	
+
 	freeze_timer = 0.0
 	shield_charges = 0
 	current_power_up_chance = power_up_spawn_chance_start
@@ -540,6 +541,27 @@ func _ready() -> void:
 	
 	current_level_index = 0
 	ThemeManager.equip_theme(levels[0].theme)
+
+func _setup_glow() -> void:
+	# Bloom on the bright neon/liquid highlights — the single biggest quality lift.
+	# Shaders clamp to 1.0, so a sub-1.0 HDR threshold blooms the brightest areas.
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CANVAS
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_strength = 1.1
+	env.glow_bloom = 0.15
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	env.glow_hdr_threshold = 0.75
+	env.glow_hdr_scale = 2.0
+	env.set_glow_level(1, 0.0)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(3, 1.0)
+	env.set_glow_level(4, 0.6)
+	env.set_glow_level(5, 0.0)
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
 
 func _create_soft_particle_texture() -> GradientTexture2D:
 	var tex = GradientTexture2D.new()
