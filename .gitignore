@@ -3,6 +3,7 @@
 *.translation
 export_presets.cfg
 *.apk
+*.apk.idsig
 *.aab
 *.keystore
 .idea/
