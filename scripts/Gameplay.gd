@@ -569,6 +569,11 @@ func _setup_glow() -> void:
 	env.set_glow_level(3, 1.0)
 	env.set_glow_level(4, 0.6)
 	env.set_glow_level(5, 0.0)
+	# Subtle colour grade: richer, more vibrant liquid without crushing the UI.
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.02
+	env.adjustment_contrast = 1.07
+	env.adjustment_saturation = 1.16
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -663,7 +668,22 @@ func _setup_ability_ui() -> void:
 	var mat = CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	ability_icon_rect.material = mat
-	
+
+	# Dark backing disc so the additive (neon-on-black) icon reads crisply over
+	# bright backgrounds instead of washing out.
+	var backing = Panel.new()
+	backing.custom_minimum_size = Vector2(118, 118)
+	backing.size = Vector2(118, 118)
+	backing.position = Vector2(1, 1)
+	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bstyle = StyleBoxFlat.new()
+	bstyle.bg_color = Color(0.03, 0.05, 0.09, 0.8)
+	bstyle.set_corner_radius_all(59)
+	bstyle.set_border_width_all(2)
+	bstyle.border_color = Color(0.2, 0.85, 1.0, 0.45)
+	backing.add_theme_stylebox_override("panel", bstyle)
+	ability_container.add_child(backing)
+
 	ability_container.add_child(ability_icon_rect)
 	
 	ability_progress = TextureProgressBar.new()
