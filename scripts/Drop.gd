@@ -436,6 +436,8 @@ func _process(delta: float) -> void:
 						final_damage *= 0.1 # Tiny barely hurts (1.5 per drop)
 				missed.emit(final_damage)
 				
+			if gameplay_ref and gameplay_ref.has_method("_spawn_flood_splash"):
+				gameplay_ref._spawn_flood_splash(position.x, get_current_color())
 			if _pool:
 				_pool.return_drop(self)
 			else:
@@ -543,6 +545,8 @@ func pop_by_bomb() -> void:
 	_play_pop_animation()
 
 func _play_pop_animation() -> void:
+	if gameplay_ref and gameplay_ref.has_method("_spawn_ripple"):
+		gameplay_ref._spawn_ripple(position, get_current_color(), 1.3)
 	if _tween and _tween.is_valid():
 		_tween.kill()
 	

@@ -497,6 +497,8 @@ func _ready() -> void:
 	tidal_wave_particles.texture = soft_tex
 	midas_particles.texture = soft_tex
 	freeze_particles.texture = soft_tex
+	_soft_tex = soft_tex
+	_ripple_tex = _create_ring_texture(48, 6, Color(1, 1, 1, 1), true)
 	event_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	game_ui.move_child(event_overlay, 0)
 	
@@ -1432,6 +1434,33 @@ func _spawn_particle(pos: Vector2, col: Color, is_bomb: bool = false, is_rainbow
 	var p = pool_manager.get_particle()
 	p.position = pos
 	p.play_effect(col, is_bomb, is_rainbow)
+
+var _soft_tex: Texture2D
+var _ripple_tex: Texture2D
+
+func _spawn_ripple(pos: Vector2, color: Color, max_scale: float = 1.4) -> void:
+	# Cheap expanding shockwave ring — a flattened ellipse like a real liquid ripple.
+	if not _ripple_tex: return
+	var ring = Sprite2D.new()
+	ring.texture = _ripple_tex
+	ring.position = pos
+	ring.z_index = 60
+	ring.modulate = Color(color.r, color.g, color.b, 0.85)
+	ring.scale = Vector2(0.15, 0.12)
+	ring.material = _additive_material()
+	add_child(ring)
+	var tw = create_tween()
+	tw.tween_property(ring, "scale", Vector2(max_scale, max_scale * 0.65), 0.32).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(ring, "modulate:a", 0.0, 0.32)
+	tw.tween_callback(ring.queue_free)
+
+func _spawn_flood_splash(x: float, color: Color) -> void:
+	# Splash where the drop enters the water (the current flood surface).
+	var screen_h = get_screen_bottom() - get_screen_top()
+	var surface_y = get_screen_bottom() - (current_flood / max_flood) * screen_h
+	var pos = Vector2(x, surface_y)
+	_spawn_ripple(pos, color.lightened(0.25), 2.1)
+	_spawn_particle(pos, color)
 
 func update_hud() -> void:
 	score_label.text = "Score: %d" % GameManager.score
