@@ -64,26 +64,10 @@ func apply_stats() -> void:
 		tap_health = 1
 		drop_radius = 40.0 * theme_mult * custom_scale_mult
 
-	if type == DropType.ACID:
-		icon_label.text = "☠"
-		icon_label.add_theme_color_override("font_color", Color(0.2, 0.0, 0.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 0.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.NEUTRALIZER:
-		icon_label.text = "✚"
-		icon_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(0.0, 0.5, 1.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.GOLD:
-		icon_label.hide()
-	else:
-		icon_label.hide()
+	# All special-drop symbols are drawn in _draw() now (one system = consistent
+	# centering), so the old emoji label stays hidden. (ACID previously showed a ☠
+	# label AND a drawn X — a double symbol.)
+	icon_label.hide()
 		
 	# Position is synced with shader in the forming tween, but we set its horizontal center here
 	icon_label.position.x = -60
@@ -479,10 +463,9 @@ func _update_shader_liquid_type() -> void:
 			coin_rect.material.set_shader_parameter("spin_speed", 12.0)
 		else:
 			coin_rect.material.set_shader_parameter("spin_speed", 5.0)
-	elif type == DropType.RAINBOW:
-		fluid_rect.hide()
-		coin_rect.hide()
 	else:
+		# Includes RAINBOW now → shows the pearlescent liquid body (liquid_type 4)
+		# instead of just floating drawn rings, so it reads as a liquid drop.
 		coin_rect.hide()
 		fluid_rect.show()
 		fluid_rect.material.set_shader_parameter("liquid_type", s_type)
@@ -590,7 +573,7 @@ func get_current_color() -> Color:
 	return Color(0.2, 0.6, 1.0, 1.0)
 
 func _draw() -> void:
-	if type == DropType.NORMAL or type == DropType.GOLD: return
+	if type == DropType.NORMAL or type == DropType.GOLD or type == DropType.RAINBOW: return
 	
 	# Do not draw the symbol until the drop detaches from the ceiling!
 	if state == DropState.FORMING: return
@@ -619,7 +602,8 @@ func _draw() -> void:
 		DropType.SHIELD: base_col = Color(0.9, 0.4, 1.0, 1.0)
 		DropType.ACID: base_col = Color(0.8, 1.0, 0.1, 1.0)
 		DropType.METEOR: base_col = Color(0.1, 0.8, 0.1, 1.0)
-		
+		DropType.NEUTRALIZER: base_col = Color(0.3, 1.0, 0.9, 1.0)
+
 	var glow_col = base_col
 	
 	# Draw beautiful soft radial glow behind the symbol
@@ -671,6 +655,12 @@ func _draw() -> void:
 				var c = Color(0.5, 0.8, 0.0, 0.4) if w == 6.0 else base_col
 				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w * current_scale)
 				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w * current_scale)
+		DropType.NEUTRALIZER:
+			base_col = Color(0.3, 1.0, 0.9, 1.0)
+			for w in [7.0, 3.0]:
+				var c = Color(0.0, 0.7, 0.6, 0.45) if w == 7.0 else base_col
+				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w * current_scale)
+				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w * current_scale)
 		DropType.METEOR:
 			base_col = Color(0.2, 0.9, 0.2, 1.0)
 			# Draw a rock-like texture/lines
