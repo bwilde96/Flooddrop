@@ -199,14 +199,14 @@ func on_pool_activate(pool: Node) -> void:
 	
 	var actual_duration = spawn_formation_duration * theme_cache.get("form_mult", 1.0)
 	var s_type = theme_cache.get("shader_type", 0)
-	var final_radius = 32.0 * size_m
+	var final_radius = 40.0 * size_m
 	var final_y = 50.0
 	
 	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
-		final_radius = 45.0 * size_m
+		final_radius = 54.0 * size_m
 		final_y = 50.0
 	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
-		final_radius = 28.0 * size_m
+		final_radius = 35.0 * size_m
 		final_y = 70.0
 	
 	# Start as a tiny blob on the ceiling
@@ -254,15 +254,15 @@ func force_fall() -> void:
 	
 	# Instantly snap visuals to their fully formed state
 	var size_m = theme_cache.get("size_mult", 1.0)
-	var final_radius = 32.0 * size_m
+	var final_radius = 40.0 * size_m
 	var final_y = 50.0
 	var s_type = theme_cache.get("shader_type", 0)
 	
 	if s_type == 1 or s_type == 2 or s_type == 6:
-		final_radius = 45.0 * size_m
+		final_radius = 54.0 * size_m
 		final_y = 35.0
 	elif s_type == 0 or s_type == 3:
-		final_radius = 28.0 * size_m
+		final_radius = 35.0 * size_m
 		final_y = 70.0
 		
 	fluid_rect.material.set_shader_parameter("drop_y", final_y)
