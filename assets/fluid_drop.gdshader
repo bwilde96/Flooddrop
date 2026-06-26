@@ -7,6 +7,7 @@ uniform float anchor_multiplier = 1.0;
 uniform int liquid_type = 0; // 0=Water, 1=Lava, 2=Slime, 3=Acid, 4=Rainbow, 5=Galaxy, 6=Gold, 7=Neon Plasma
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear;
 uniform bool is_slime_shape = false;
+uniform float edge_aa = 11.0; // Edge anti-alias softness (lower = softer/smoother edge)
 
 // Simple random function
 float rand(vec2 co) {
@@ -359,7 +360,7 @@ void fragment() {
         }
         
         // Smooth anti-aliased edge
-        float alpha = clamp((total_energy - 1.0) * 20.0, 0.0, 1.0);
+        float alpha = clamp((total_energy - 1.0) * edge_aa, 0.0, 1.0);
         final_color.a *= alpha;
         
         COLOR = clamp(final_color, 0.0, 1.0);
