@@ -1643,10 +1643,16 @@ func _additive_material() -> CanvasItemMaterial:
 
 func _load_keyed_sprite(path: String, thresh: float) -> Sprite2D:
 	var s = Sprite2D.new()
-	var img = Image.new()
-	if img.load(path) == OK:
-		_make_transparent(img, thresh)
-		s.texture = ImageTexture.create_from_image(img)
+	# Use the IMPORTED texture (export-safe) and chroma-key its image, rather than
+	# Image.load() which reads the raw file and doesn't work in an exported build.
+	var tex := load(path) as Texture2D
+	if tex:
+		var img := tex.get_image()
+		if img:
+			if img.is_compressed():
+				img.decompress()
+			_make_transparent(img, thresh)
+			s.texture = ImageTexture.create_from_image(img)
 	return s
 
 func _setup_turret() -> void:
@@ -1801,7 +1807,7 @@ func _hide_muzzle_flash() -> void:
 func _hide_laser_impact() -> void:
 	if laser_impact_sprite: laser_impact_sprite.visible = false
 
-func _fire_turret_bullet(dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
+func _fire_turret_bullet(_dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
 	target.set("is_targeted_by_turret", true)
 	var bullet := Sprite2D.new()
 	bullet.texture = muzzle_flash.texture # Reuse the soft glow dot
