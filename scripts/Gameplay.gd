@@ -244,8 +244,9 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
+	_setup_glow()
 	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
-	
+
 	freeze_timer = 0.0
 	shield_charges = 0
 	current_power_up_chance = power_up_spawn_chance_start
@@ -389,9 +390,8 @@ func _ready() -> void:
 	multiplier_label.offset_bottom = -10
 	multiplier_container.add_child(multiplier_label)
 	
-	if OS.has_feature("editor"):
-		debug_panel.visible = true
-	
+	debug_panel.visible = OS.has_feature("editor")
+
 
 	
 	evaporation_particles = CPUParticles2D.new()
@@ -413,16 +413,24 @@ func _ready() -> void:
 	add_child(evaporation_particles)
 	
 	tidal_wave_rect = ColorRect.new()
-	tidal_wave_rect.color = Color(0.2, 0.6, 1.0, 0.7)
+	tidal_wave_rect.color = Color(1.0, 1.0, 1.0, 1.0) # The shader provides the colour
 	tidal_wave_rect.size = Vector2(720, 1500) # Ensure it covers the whole screen bottom
 	tidal_wave_rect.position = Vector2(0, get_screen_bottom())
 	tidal_wave_rect.visible = false
 	tidal_wave_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The beautiful animated ocean-wave shader (was sitting unused in assets/).
+	var wave_shader = load("res://assets/crashing_wave.gdshader")
+	if wave_shader:
+		var wave_mat = ShaderMaterial.new()
+		wave_mat.shader = wave_shader
+		tidal_wave_rect.material = wave_mat
 	add_child(tidal_wave_rect)
 	
 	tidal_wave_particles = CPUParticles2D.new()
 	tidal_wave_particles.emitting = false
-	tidal_wave_particles.amount = 300
+	# Subtle foam spray only — the wave shader carries the look now. (Was 300 bright
+	# particles that the bloom turned into blocky white squares.)
+	tidal_wave_particles.amount = 70
 	tidal_wave_particles.lifetime = 0.5
 	tidal_wave_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
 	tidal_wave_particles.emission_rect_extents = Vector2(360, 10)
@@ -431,9 +439,9 @@ func _ready() -> void:
 	tidal_wave_particles.spread = 45.0
 	tidal_wave_particles.initial_velocity_min = 200.0
 	tidal_wave_particles.initial_velocity_max = 500.0
-	tidal_wave_particles.scale_amount_min = 0.2
-	tidal_wave_particles.scale_amount_max = 0.5
-	tidal_wave_particles.color = Color(0.8, 0.9, 1.0, 0.8)
+	tidal_wave_particles.scale_amount_min = 0.12
+	tidal_wave_particles.scale_amount_max = 0.32
+	tidal_wave_particles.color = Color(0.85, 0.93, 1.0, 0.35)
 	tidal_wave_rect.add_child(tidal_wave_particles)
 	
 	midas_overlay = ColorRect.new()
@@ -489,6 +497,8 @@ func _ready() -> void:
 	tidal_wave_particles.texture = soft_tex
 	midas_particles.texture = soft_tex
 	freeze_particles.texture = soft_tex
+	_soft_tex = soft_tex
+	_ripple_tex = _create_ring_texture(48, 6, Color(1, 1, 1, 1), true)
 	event_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	game_ui.move_child(event_overlay, 0)
 	
@@ -541,6 +551,32 @@ func _ready() -> void:
 	
 	current_level_index = 0
 	ThemeManager.equip_theme(levels[0].theme)
+
+func _setup_glow() -> void:
+	# Bloom on the bright neon/liquid highlights — the single biggest quality lift.
+	# Shaders clamp to 1.0, so a sub-1.0 HDR threshold blooms the brightest areas.
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CANVAS
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_strength = 1.1
+	env.glow_bloom = 0.15
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	env.glow_hdr_threshold = 0.75
+	env.glow_hdr_scale = 2.0
+	env.set_glow_level(1, 0.0)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(3, 1.0)
+	env.set_glow_level(4, 0.6)
+	env.set_glow_level(5, 0.0)
+	# Subtle colour grade: richer, more vibrant liquid without crushing the UI.
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.02
+	env.adjustment_contrast = 1.07
+	env.adjustment_saturation = 1.16
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
 
 func _create_soft_particle_texture() -> GradientTexture2D:
 	var tex = GradientTexture2D.new()
@@ -632,7 +668,22 @@ func _setup_ability_ui() -> void:
 	var mat = CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	ability_icon_rect.material = mat
-	
+
+	# Dark backing disc so the additive (neon-on-black) icon reads crisply over
+	# bright backgrounds instead of washing out.
+	var backing = Panel.new()
+	backing.custom_minimum_size = Vector2(118, 118)
+	backing.size = Vector2(118, 118)
+	backing.position = Vector2(1, 1)
+	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bstyle = StyleBoxFlat.new()
+	bstyle.bg_color = Color(0.03, 0.05, 0.09, 0.8)
+	bstyle.set_corner_radius_all(59)
+	bstyle.set_border_width_all(2)
+	bstyle.border_color = Color(0.2, 0.85, 1.0, 0.45)
+	backing.add_theme_stylebox_override("panel", bstyle)
+	ability_container.add_child(backing)
+
 	ability_container.add_child(ability_icon_rect)
 	
 	ability_progress = TextureProgressBar.new()
@@ -929,30 +980,64 @@ func _update_flood_visual_smooth_raw(val: float) -> void:
 
 func _trigger_level_up() -> void:
 	var new_level = levels[current_level_index]
-	ThemeManager.equip_theme(new_level.theme) # Actually, ThemeManager will return equipped theme
+	ThemeManager.equip_theme(new_level.theme)
 	var t = ThemeManager.get_theme(new_level.theme)
-	ThemeManager.equip_theme(new_level.theme) # Make sure it's globally equipped
-	
+
 	event_triggered_for_level = false
 	if active_event != "chaos":
 		active_event = ""
 		event_timer = 0.0
-	
-	level_up_label.text = "LEVEL %d - %s" % [current_level_index + 1, t.name.to_upper()]
-	
+
+	var is_first = (current_level_index == 0)
+
+	# --- Bold "new environment" reveal ---
+	level_up_label.text = "LEVEL %d\n%s" % [current_level_index + 1, t.name.to_upper()]
+	level_up_label.add_theme_font_size_override("font_size", 60)
+	level_up_label.add_theme_color_override("font_color", t.drop_color.lightened(0.3))
+	level_up_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	level_up_label.add_theme_constant_override("outline_size", 14)
+	level_up_label.pivot_offset = level_up_label.size / 2.0
+	level_up_label.scale = Vector2(0.4, 0.4)
+	level_up_label.modulate = Color(2.0, 2.0, 2.0, 0.0) # Bright + invisible to start
+
 	var tween = create_tween()
-	tween.tween_property(level_up_label, "modulate:a", 1.0, 0.5)
-	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
-	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
-	
+	tween.tween_property(level_up_label, "modulate", Color(1.2, 1.2, 1.2, 1.0), 0.25)
+	tween.parallel().tween_property(level_up_label, "scale", Vector2(1.15, 1.15), 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.15)
+	tween.tween_interval(1.4)
+	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.6)
+
 	var old_theme = levels[max(0, current_level_index - 1)].theme
 	BackgroundManager.update_background(old_theme, levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/bottom_color", t.flood_color, 2.0)
 	flood_rect.material.set_shader_parameter("liquid_type", t.get("shader_type", 0))
-	
-	AudioManager.play_sfx("power_up")
+
+	if is_first:
+		AudioManager.play_sfx("power_up")
+		return
+
+	# --- Celebration: reaching a new depth should feel like an event ---
+	AudioManager.play_sfx("rainbow")
+	AudioManager.vibrate("rainbow")
+	shake_intensity = screen_shake_strength * 1.5
+	trigger_hit_pause(0.06)
+
+	# Theme-coloured screen flash
+	event_overlay.color = t.drop_color
+	event_overlay.modulate.a = 0.55
+	var flash = create_tween()
+	flash.tween_property(event_overlay, "modulate:a", 0.0, 0.6)
+
+	# Burst of light at the centre + a tangible "you went deeper" reward
+	var cx = get_viewport().get_visible_rect().size.x / 2.0
+	var center = Vector2(cx, (get_screen_top() + get_screen_bottom()) / 2.0)
+	_spawn_particle(center, t.drop_color, false, true)
+	var depth_bonus = current_level_index * 250
+	GameManager.score += depth_bonus
+	_spawn_floating_text("NEW DEPTH!  +%d" % depth_bonus, center + Vector2(0, 90), t.drop_color.lightened(0.4))
+	update_hud()
 
 func _start_event(title: String, duration: float, internal_name: String, color: Color = Color.WHITE) -> void:
 	active_event = internal_name
@@ -1136,14 +1221,16 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.is_pinata = false
 		
 	var current_time = Time.get_ticks_msec() / 1000.0
-	var requested_formation = randf_range(0.8, 3.5)
+	# Tighter, snappier formation: drops drip and fall quickly instead of hanging at the
+	# ceiling for up to 3.5s (which read as sticky/unresponsive on the water level).
+	var requested_formation = randf_range(0.45, 1.1)
 	var proposed_fall_time = current_time + requested_formation
 	
 	if proposed_fall_time < next_available_fall_time:
 		proposed_fall_time = next_available_fall_time
 		requested_formation = proposed_fall_time - current_time
 		
-	next_available_fall_time = proposed_fall_time + 0.35 # Enforce at least 0.35s gap between drops falling
+	next_available_fall_time = proposed_fall_time + 0.2 # Small gap between drops falling (was 0.35, felt over-metered)
 	
 	# Pass the exact formation duration to the drop
 	drop.spawn_formation_duration = requested_formation
@@ -1368,6 +1455,33 @@ func _spawn_particle(pos: Vector2, col: Color, is_bomb: bool = false, is_rainbow
 	p.position = pos
 	p.play_effect(col, is_bomb, is_rainbow)
 
+var _soft_tex: Texture2D
+var _ripple_tex: Texture2D
+
+func _spawn_ripple(pos: Vector2, color: Color, max_scale: float = 1.4) -> void:
+	# Cheap expanding shockwave ring — a flattened ellipse like a real liquid ripple.
+	if not _ripple_tex: return
+	var ring = Sprite2D.new()
+	ring.texture = _ripple_tex
+	ring.position = pos
+	ring.z_index = 60
+	ring.modulate = Color(color.r, color.g, color.b, 0.85)
+	ring.scale = Vector2(0.15, 0.12)
+	ring.material = _additive_material()
+	add_child(ring)
+	var tw = create_tween()
+	tw.tween_property(ring, "scale", Vector2(max_scale, max_scale * 0.65), 0.32).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(ring, "modulate:a", 0.0, 0.32)
+	tw.tween_callback(ring.queue_free)
+
+func _spawn_flood_splash(x: float, color: Color) -> void:
+	# Splash where the drop enters the water (the current flood surface).
+	var screen_h = get_screen_bottom() - get_screen_top()
+	var surface_y = get_screen_bottom() - (current_flood / max_flood) * screen_h
+	var pos = Vector2(x, surface_y)
+	_spawn_ripple(pos, color.lightened(0.25), 2.1)
+	_spawn_particle(pos, color)
+
 func update_hud() -> void:
 	score_label.text = "Score: %d" % GameManager.score
 	var hs = SaveManager.get_value("high_score", 0.0)
@@ -1503,126 +1617,226 @@ func _draw_lightning(from: Vector2, to: Vector2) -> void:
 	tw.tween_property(line, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(line.queue_free)
 
-var turret_base: TextureRect
-var turret_barrel: TextureRect
+var turret_base: Sprite2D
+var turret_barrel: Sprite2D
+var laser_core: Line2D
+var muzzle_flash: Sprite2D
+var laser_impact_sprite: Sprite2D
+var active_bullets: Array = []
 var time_since_last_shot: float = 0.0
 
-func _make_transparent(img: Image) -> void:
+func _make_transparent(img: Image, thresh: float = 0.18) -> void:
+	# Chroma-key the solid background (top-left pixel) out of the turret JPEGs.
 	img.convert(Image.FORMAT_RGBA8)
-	var bg_color = img.get_pixel(0, 0)
+	var bg = img.get_pixel(0, 0)
 	for y in range(img.get_height()):
 		for x in range(img.get_width()):
 			var c = img.get_pixel(x, y)
-			if abs(c.r - bg_color.r) < 0.15 and abs(c.g - bg_color.g) < 0.15 and abs(c.b - bg_color.b) < 0.15:
+			if abs(c.r - bg.r) < thresh and abs(c.g - bg.g) < thresh and abs(c.b - bg.b) < thresh:
 				c.a = 0.0
 				img.set_pixel(x, y, c)
 
+func _additive_material() -> CanvasItemMaterial:
+	var m = CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	return m
+
+func _load_keyed_sprite(path: String, thresh: float) -> Sprite2D:
+	var s = Sprite2D.new()
+	var img = Image.new()
+	if img.load(path) == OK:
+		_make_transparent(img, thresh)
+		s.texture = ImageTexture.create_from_image(img)
+	return s
+
 func _setup_turret() -> void:
-	turret_base = TextureRect.new()
-	var img_base = Image.new()
-	if img_base.load("res://assets/turret_base.jpg") == OK:
-		_make_transparent(img_base)
-		turret_base.texture = ImageTexture.create_from_image(img_base)
-	turret_base.custom_minimum_size = Vector2(80, 80)
-	turret_base.size = Vector2(80, 80)
-	turret_base.position = Vector2(360 - 40, get_screen_bottom() - 100)
-	turret_base.modulate = Color(0.8, 0.8, 0.8, 0.8)
-	turret_base.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_base.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Real turret art (chroma-keyed): circular base on white bg + vertical cannon on black bg.
+	turret_base = _load_keyed_sprite("res://assets/turret_base.jpg", 0.28)
+	turret_base.position = Vector2(360, get_screen_bottom() - 95)
+	turret_base.scale = Vector2(0.16, 0.16)
+	turret_base.z_index = 8 # Above the flood
 	add_child(turret_base)
-	
-	turret_barrel = TextureRect.new()
-	var img_barrel = Image.new()
-	if img_barrel.load("res://assets/turret_barrel.jpg") == OK:
-		_make_transparent(img_barrel)
-		turret_barrel.texture = ImageTexture.create_from_image(img_barrel)
-	turret_barrel.custom_minimum_size = Vector2(30, 80)
-	turret_barrel.size = Vector2(30, 80)
-	turret_barrel.position = Vector2(25, -40)
-	turret_barrel.pivot_offset = Vector2(15, 60)
-	turret_barrel.modulate = Color(0.9, 0.9, 0.9, 0.9)
-	turret_barrel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_barrel.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+
+	# Barrel pivots around its own centre (child draws above the base).
+	turret_barrel = _load_keyed_sprite("res://assets/turret_barrel.jpg", 0.14)
+	turret_barrel.position = Vector2(0, -55)
+	turret_barrel.scale = Vector2(0.95, 0.95) # Relative to the base's scale
+	# Normal blend so the metal cannon reads solid; bloom handles the orange glow.
 	turret_base.add_child(turret_barrel)
-	
+
 	var muzzle = Marker2D.new()
 	muzzle.name = "Muzzle"
-	muzzle.position = Vector2(15, 0) # Top center of barrel image
+	muzzle.position = Vector2(0, -470) # Tip of the cannon in the barrel's local space
 	turret_barrel.add_child(muzzle)
-	
+
+	# Procedural glowing beam (wide glow + white-hot core). Bloom does the rest.
 	laser_line = Line2D.new()
-	laser_line.default_color = Color(1.0, 0.2, 0.2, 0.8)
-	laser_line.width = 8.0
+	laser_line.default_color = Color(1.0, 0.12, 0.06, 0.8)
+	laser_line.width = 22.0
+	laser_line.joint_mode = Line2D.LINE_JOINT_ROUND
+	laser_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_line.material = _additive_material()
+	laser_line.z_index = 10
 	laser_line.visible = false
 	add_child(laser_line)
-	
+
+	laser_core = Line2D.new()
+	laser_core.default_color = Color(1.0, 0.62, 0.4, 1.0)
+	laser_core.width = 7.0
+	laser_core.joint_mode = Line2D.LINE_JOINT_ROUND
+	laser_core.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.end_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.material = _additive_material()
+	laser_core.z_index = 11
+	laser_core.visible = false
+	add_child(laser_core)
+
+	var soft = _create_soft_particle_texture()
+
+	muzzle_flash = Sprite2D.new()
+	muzzle_flash.texture = soft
+	muzzle_flash.visible = false
+	muzzle_flash.z_index = 12
+	muzzle_flash.material = _additive_material()
+	add_child(muzzle_flash)
+
+	laser_impact_sprite = Sprite2D.new()
+	laser_impact_sprite.texture = soft
+	laser_impact_sprite.visible = false
+	laser_impact_sprite.z_index = 12
+	laser_impact_sprite.material = _additive_material()
+	add_child(laser_impact_sprite)
+
 func _process_turret(delta: float) -> void:
 	if not turret_barrel or not is_playing: return
-	
+
+	_process_bullets(delta)
 	time_since_last_shot += delta
-	
+
 	if laser_timer > 0:
 		laser_timer -= delta
-		if laser_timer <= 0 and laser_line:
-			laser_line.visible = false
-			
+		if laser_timer <= 0:
+			if laser_line: laser_line.visible = false
+			if laser_core: laser_core.visible = false
+
 	var target = null
 	var best_d = 800.0
-	
+
 	for child in drop_container.get_children():
-		if child.has_method("pop_by_bomb") and child.state != child.DropState.INACTIVE and child.state != child.DropState.POPPING and not child.get("is_targeted_by_turret"):
+		if child.has_method("pop_by_bomb") and child.state == child.DropState.FALLING and not child.get("is_targeted_by_turret"):
 			var d = child.global_position.distance_to(turret_base.global_position)
 			if d < best_d and child.position.y < turret_base.global_position.y:
 				best_d = d
 				target = child
-				
+
 	if target:
-		var dir = (target.global_position - (turret_base.global_position + Vector2(40, 20))).normalized()
-		turret_barrel.rotation = dir.angle() + PI/2.0
-		
+		var dir = (target.global_position - turret_barrel.global_position).normalized()
+		turret_barrel.rotation = dir.angle() + PI / 2.0
+
 		var muzzle_pos = turret_barrel.get_node("Muzzle").global_position
-		
+
 		if is_turret_active:
-			if time_since_last_shot > 0.05: # Fast laser beam!
+			if time_since_last_shot > 0.06: # Rapid laser
 				time_since_last_shot = 0.0
 				target.set("is_targeted_by_turret", true)
-				if laser_line:
-					laser_line.clear_points()
-					laser_line.add_point(muzzle_pos)
-					laser_line.add_point(target.global_position)
-					laser_line.visible = true
-				laser_timer = 0.1
+				_fire_laser(muzzle_pos, target.global_position)
+				laser_timer = 0.09
 				AudioManager.play_sfx("button")
 				target.pop_by_bomb()
 				GameManager.score += target.score_value
-				_spawn_floating_text("+%d LASER!" % target.score_value, target.position, Color(1.0, 0.2, 0.2))
+				_spawn_floating_text("+%d LASER!" % target.score_value, target.position, Color(1.0, 0.3, 0.2))
 		else:
-			var fire_rate = 3.0
+			var fire_rate = 2.0
 			if time_since_last_shot > fire_rate:
 				time_since_last_shot = 0.0
 				_fire_turret_bullet(dir, target, muzzle_pos)
-			
+
+func _build_beam_points(from: Vector2, to: Vector2) -> PackedVector2Array:
+	# Slightly jittered midpoints so the beam reads as crackling energy.
+	var pts = PackedVector2Array()
+	var n = 7
+	var perp = (to - from).normalized().orthogonal()
+	for i in range(n + 1):
+		var p = from.lerp(to, float(i) / n)
+		if i != 0 and i != n:
+			p += perp * randf_range(-7.0, 7.0)
+		pts.append(p)
+	return pts
+
+func _fire_laser(from: Vector2, to: Vector2) -> void:
+	var pts = _build_beam_points(from, to)
+	if laser_line:
+		laser_line.points = pts
+		laser_line.width = randf_range(18.0, 26.0)
+		laser_line.visible = true
+	if laser_core:
+		laser_core.points = pts
+		laser_core.visible = true
+
+	if muzzle_flash:
+		muzzle_flash.global_position = from
+		muzzle_flash.visible = true
+		muzzle_flash.modulate = Color(1.0, 0.55, 0.4, 0.9)
+		muzzle_flash.scale = Vector2(1.1, 1.1)
+		var t1 = create_tween()
+		t1.tween_property(muzzle_flash, "scale", Vector2(0.5, 0.5), 0.09)
+		t1.parallel().tween_property(muzzle_flash, "modulate:a", 0.0, 0.09)
+		t1.tween_callback(_hide_muzzle_flash)
+
+	if laser_impact_sprite:
+		laser_impact_sprite.global_position = to
+		laser_impact_sprite.visible = true
+		laser_impact_sprite.modulate = Color(1.0, 0.55, 0.45, 1.0)
+		laser_impact_sprite.scale = Vector2(1.2, 1.2)
+		var t2 = create_tween()
+		t2.tween_property(laser_impact_sprite, "scale", Vector2(3.4, 3.4), 0.15).set_ease(Tween.EASE_OUT)
+		t2.parallel().tween_property(laser_impact_sprite, "modulate:a", 0.0, 0.2)
+		t2.tween_callback(_hide_laser_impact)
+	_spawn_particle(to, Color(1.0, 0.4, 0.2))
+
+func _hide_muzzle_flash() -> void:
+	if muzzle_flash: muzzle_flash.visible = false
+
+func _hide_laser_impact() -> void:
+	if laser_impact_sprite: laser_impact_sprite.visible = false
+
 func _fire_turret_bullet(dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
 	target.set("is_targeted_by_turret", true)
-	var bullet = ColorRect.new()
-	bullet.size = Vector2(8, 24)
-	bullet.color = Color(1.0, 0.8, 0.2)
-	bullet.position = muzzle_pos - Vector2(4, 12) + dir * 10.0
-	bullet.pivot_offset = Vector2(4, 12)
-	bullet.rotation = dir.angle() + PI/2.0
+	var bullet := Sprite2D.new()
+	bullet.texture = muzzle_flash.texture # Reuse the soft glow dot
+	bullet.modulate = Color(1.0, 0.85, 0.35, 1.0)
+	bullet.scale = Vector2(0.7, 0.7)
+	bullet.z_index = 9
+	bullet.material = _additive_material()
+	bullet.global_position = muzzle_pos
 	add_child(bullet)
-	
+	active_bullets.append({"node": bullet, "target": target})
 	AudioManager.play_sfx("button")
-	
-	var tw = create_tween()
-	var travel_time = bullet.position.distance_to(target.global_position) / 1000.0
-	tw.tween_property(bullet, "position", target.global_position, travel_time)
-	tw.tween_callback(func():
-		bullet.queue_free()
-		if target and is_instance_valid(target) and target.state != target.DropState.POPPING and target.state != target.DropState.INACTIVE:
-			if target.has_method("pop_by_bomb"):
-				target.pop_by_bomb()
-				GameManager.score += target.score_value
-				_spawn_floating_text("+%d TURRET!" % target.score_value, target.position, Color(1.0, 0.8, 0.2))
-				AudioManager.play_sfx("pop")
-	)
+
+func _process_bullets(delta: float) -> void:
+	var speed = 1500.0
+	for i in range(active_bullets.size() - 1, -1, -1):
+		var b = active_bullets[i]
+		var node = b["node"]
+		var tgt = b["target"]
+		if not is_instance_valid(node):
+			active_bullets.remove_at(i)
+			continue
+		# Drop gone (popped/recycled) — let the bullet fizzle out.
+		if not is_instance_valid(tgt) or tgt.state == tgt.DropState.POPPING or tgt.state == tgt.DropState.INACTIVE:
+			node.queue_free()
+			active_bullets.remove_at(i)
+			continue
+		var to = tgt.global_position
+		node.global_position = node.global_position.move_toward(to, speed * delta)
+		node.rotation = (to - node.global_position).angle()
+		if node.global_position.distance_to(to) < 42.0:
+			# Actual contact — now pop it.
+			tgt.pop_by_bomb()
+			GameManager.score += tgt.score_value
+			_spawn_floating_text("+%d TURRET!" % tgt.score_value, tgt.position, Color(1.0, 0.85, 0.3))
+			_spawn_particle(to, Color(1.0, 0.8, 0.3))
+			AudioManager.play_sfx("pop")
+			node.queue_free()
+			active_bullets.remove_at(i)

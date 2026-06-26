@@ -64,32 +64,20 @@ func apply_stats() -> void:
 		tap_health = 1
 		drop_radius = 40.0 * theme_mult * custom_scale_mult
 
-	if type == DropType.ACID:
-		icon_label.text = "☠"
-		icon_label.add_theme_color_override("font_color", Color(0.2, 0.0, 0.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 0.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.NEUTRALIZER:
-		icon_label.text = "✚"
-		icon_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(0.0, 0.5, 1.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.GOLD:
-		icon_label.hide()
-	else:
-		icon_label.hide()
+	# All special-drop symbols are drawn in _draw() now (one system = consistent
+	# centering), so the old emoji label stays hidden. (ACID previously showed a ☠
+	# label AND a drawn X — a double symbol.)
+	icon_label.hide()
 		
 	# Position is synced with shader in the forming tween, but we set its horizontal center here
 	icon_label.position.x = -60
 		
 	if collision_shape and collision_shape.shape is CircleShape2D:
-		collision_shape.shape.radius = drop_radius * 2.5
+		var tap_mult := 2.5
+		# Magnetic Tap passive: widen the hit area so taps are more forgiving.
+		if gameplay_ref and "magnetic_tap" in gameplay_ref.owned_passives:
+			tap_mult = 3.25
+		collision_shape.shape.radius = drop_radius * tap_mult
 	visuals.scale = Vector2.ONE * custom_scale_mult
 var gameplay_ref: Node = null
 var tap_health: int = 1
@@ -120,6 +108,10 @@ var _tween: Tween = null
 var theme_cache: Dictionary = {}
 var bounce_count: int = 0
 var fall_velocity: float = 0.0
+# Velocity-based slime bounce (replaces a position tween that fought _process each frame)
+const BOUNCE_GRAVITY := 3000.0
+var is_bouncing: bool = false
+var bounce_vel_y: float = 0.0
 
 var tex_drop_base = null
 var tex_drop_high = null
@@ -169,13 +161,17 @@ func on_pool_activate(pool: Node) -> void:
 	state = DropState.FORMING
 	visible = true
 	modulate.a = 1.0
-	collision_shape.set_deferred("disabled", true)
+	# Enable the hit area immediately so drops are tappable WHILE forming.
+	# (Previously disabled until FALLING, which made fresh drops feel unresponsive.)
+	collision_shape.set_deferred("disabled", false)
 	_disconnect_all(popped)
 	_disconnect_all(missed)
 	type = DropType.NORMAL
 	
 	theme_cache = ThemeManager.get_equipped_theme()
 	bounce_count = 0
+	is_bouncing = false
+	bounce_vel_y = 0.0
 	fall_velocity = fall_speed
 	custom_scale_mult = 1.0
 	is_eruption = false
@@ -203,14 +199,14 @@ func on_pool_activate(pool: Node) -> void:
 	
 	var actual_duration = spawn_formation_duration * theme_cache.get("form_mult", 1.0)
 	var s_type = theme_cache.get("shader_type", 0)
-	var final_radius = 32.0 * size_m
+	var final_radius = 40.0 * size_m
 	var final_y = 50.0
 	
 	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
-		final_radius = 45.0 * size_m
+		final_radius = 54.0 * size_m
 		final_y = 50.0
 	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
-		final_radius = 28.0 * size_m
+		final_radius = 35.0 * size_m
 		final_y = 70.0
 	
 	# Start as a tiny blob on the ceiling
@@ -241,12 +237,8 @@ func on_pool_activate(pool: Node) -> void:
 		# Fade out the anchor during the final moments of Phase 2 so it detaches naturally
 		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.1).set_delay(actual_duration * 0.4)
 		
-		# Start falling EXACTLY as the tail detaches so it doesn't hang in the air!
-		_tween.tween_callback(func():
-			if state == DropState.FORMING:
-				state = DropState.FALLING
-				collision_shape.set_deferred("disabled", false)
-		).set_delay(actual_duration * 0.4)
+		# Falling begins on the single chained callback below, exactly when the drip
+		# (drop_y) and anchor finish — a seam-free hand-off with no double-move at release.
 	
 	_tween.chain().tween_callback(func():
 		if state == DropState.FORMING:
@@ -262,15 +254,15 @@ func force_fall() -> void:
 	
 	# Instantly snap visuals to their fully formed state
 	var size_m = theme_cache.get("size_mult", 1.0)
-	var final_radius = 32.0 * size_m
+	var final_radius = 40.0 * size_m
 	var final_y = 50.0
 	var s_type = theme_cache.get("shader_type", 0)
 	
 	if s_type == 1 or s_type == 2 or s_type == 6:
-		final_radius = 45.0 * size_m
+		final_radius = 54.0 * size_m
 		final_y = 35.0
 	elif s_type == 0 or s_type == 3:
-		final_radius = 28.0 * size_m
+		final_radius = 35.0 * size_m
 		final_y = 70.0
 		
 	fluid_rect.material.set_shader_parameter("drop_y", final_y)
@@ -346,8 +338,13 @@ func _process(delta: float) -> void:
 		else:
 			current_speed *= 0.1
 			
-	position.y += current_speed * multiplier * delta
-	
+	if is_bouncing:
+		# Slime bounce arc: integrate our own gravity, not the terminal fall speed.
+		bounce_vel_y += BOUNCE_GRAVITY * multiplier * delta
+		position.y += bounce_vel_y * multiplier * delta
+	else:
+		position.y += current_speed * multiplier * delta
+
 	if bounce_velocity_x != 0.0:
 		position.x += bounce_velocity_x * multiplier * delta
 		if position.x < 60.0:
@@ -395,15 +392,15 @@ func _process(delta: float) -> void:
 		if s_type == 2 and bounce_count < 3:
 			bounce_count += 1
 			position.y = screen_bottom - 10.0
-			
-			var bounce_height = 0.0
-			if bounce_count == 1: bounce_height = 800.0
-			elif bounce_count == 2: bounce_height = 500.0
-			elif bounce_count == 3: bounce_height = 200.0
-			
-			var bounce_tween = create_tween()
-			bounce_tween.tween_property(self, "position:y", screen_bottom - bounce_height, 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-			bounce_tween.tween_property(self, "position:y", screen_bottom + 50.0, 0.4).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+
+			# Launch upward; BOUNCE_GRAVITY in _process brings it back down for the next bounce.
+			var bounce_speed = 0.0
+			if bounce_count == 1: bounce_speed = 2100.0
+			elif bounce_count == 2: bounce_speed = 1500.0
+			else: bounce_speed = 950.0
+
+			is_bouncing = true
+			bounce_vel_y = -bounce_speed
 			missed.emit(flood_damage * 0.1) # Small penalty for bouncing
 		else:
 			if is_pinata:
@@ -423,13 +420,16 @@ func _process(delta: float) -> void:
 						final_damage *= 0.1 # Tiny barely hurts (1.5 per drop)
 				missed.emit(final_damage)
 				
+			if gameplay_ref and gameplay_ref.has_method("_spawn_flood_splash"):
+				gameplay_ref._spawn_flood_splash(position.x, get_current_color())
 			if _pool:
 				_pool.return_drop(self)
 			else:
 				queue_free()
 
 func _input_event(_viewport: Viewport, event: InputEvent, _shape_idx: int) -> void:
-	if state != DropState.FALLING: return
+	# Tappable while still FORMING too, so fresh drops never feel unresponsive.
+	if state != DropState.FALLING and state != DropState.FORMING: return
 	if event is InputEventScreenTouch or event is InputEventMouseButton:
 		if event.is_pressed():
 			pop()
@@ -463,10 +463,9 @@ func _update_shader_liquid_type() -> void:
 			coin_rect.material.set_shader_parameter("spin_speed", 12.0)
 		else:
 			coin_rect.material.set_shader_parameter("spin_speed", 5.0)
-	elif type == DropType.RAINBOW:
-		fluid_rect.hide()
-		coin_rect.hide()
 	else:
+		# Includes RAINBOW now → shows the pearlescent liquid body (liquid_type 4)
+		# instead of just floating drawn rings, so it reads as a liquid drop.
 		coin_rect.hide()
 		fluid_rect.show()
 		fluid_rect.material.set_shader_parameter("liquid_type", s_type)
@@ -529,6 +528,8 @@ func pop_by_bomb() -> void:
 	_play_pop_animation()
 
 func _play_pop_animation() -> void:
+	if gameplay_ref and gameplay_ref.has_method("_spawn_ripple"):
+		gameplay_ref._spawn_ripple(position, get_current_color(), 1.3)
 	if _tween and _tween.is_valid():
 		_tween.kill()
 	
@@ -572,7 +573,7 @@ func get_current_color() -> Color:
 	return Color(0.2, 0.6, 1.0, 1.0)
 
 func _draw() -> void:
-	if type == DropType.NORMAL or type == DropType.GOLD: return
+	if type == DropType.NORMAL or type == DropType.GOLD or type == DropType.RAINBOW: return
 	
 	# Do not draw the symbol until the drop detaches from the ceiling!
 	if state == DropState.FORMING: return
@@ -601,7 +602,8 @@ func _draw() -> void:
 		DropType.SHIELD: base_col = Color(0.9, 0.4, 1.0, 1.0)
 		DropType.ACID: base_col = Color(0.8, 1.0, 0.1, 1.0)
 		DropType.METEOR: base_col = Color(0.1, 0.8, 0.1, 1.0)
-		
+		DropType.NEUTRALIZER: base_col = Color(0.3, 1.0, 0.9, 1.0)
+
 	var glow_col = base_col
 	
 	# Draw beautiful soft radial glow behind the symbol
@@ -653,6 +655,12 @@ func _draw() -> void:
 				var c = Color(0.5, 0.8, 0.0, 0.4) if w == 6.0 else base_col
 				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w * current_scale)
 				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w * current_scale)
+		DropType.NEUTRALIZER:
+			base_col = Color(0.3, 1.0, 0.9, 1.0)
+			for w in [7.0, 3.0]:
+				var c = Color(0.0, 0.7, 0.6, 0.45) if w == 7.0 else base_col
+				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w * current_scale)
+				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w * current_scale)
 		DropType.METEOR:
 			base_col = Color(0.2, 0.9, 0.2, 1.0)
 			# Draw a rock-like texture/lines
