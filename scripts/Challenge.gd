@@ -55,7 +55,7 @@ func _ready() -> void:
 	)
 	header.add_child(back)
 
-	var title := UIKit.heading("THE GAUNTLET", 38, Color(0.62, 0.93, 1.0))
+	var title := UIKit.heading("THE GAUNTLET", 32, Color(0.62, 0.93, 1.0), true)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 

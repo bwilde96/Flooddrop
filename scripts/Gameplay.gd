@@ -1,5 +1,7 @@
 extends Node
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 enum ForceDropType {
 	NONE = -1,
 	NORMAL = 0,
@@ -261,6 +263,7 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
+	_style_hud()
 	_read_challenge_config() # must run before anything touches current_level_index
 	_setup_glow()
 	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
@@ -404,6 +407,7 @@ func _ready() -> void:
 	
 	multiplier_label = Label.new()
 	multiplier_label.text = "1x"
+	multiplier_label.add_theme_font_override("font", UIKit.font_ui_bold(1))
 	multiplier_label.add_theme_font_size_override("font_size", 40)
 	multiplier_label.add_theme_color_override("font_color", multiplier_color_map[1])
 	multiplier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -559,6 +563,7 @@ func _ready() -> void:
 	
 	event_label = Label.new()
 	event_label.text = ""
+	event_label.add_theme_font_override("font", UIKit.font_display(2))
 	event_label.add_theme_font_size_override("font_size", 54)
 	event_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	event_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
@@ -578,6 +583,28 @@ func _ready() -> void:
 		_apply_challenge_modifiers()
 
 # ------------------------------------------------------------ CHALLENGE MODE --
+func _style_hud() -> void:
+	# HUD typography per docs/DESIGN_SYSTEM.md — numbers are heroes, moments are Audiowide.
+	# Gameplay's root is a Node, so stamp the design-system theme on each HUD Control.
+	if GameManager.ui_theme:
+		game_ui.theme = GameManager.ui_theme
+		pause_menu.theme = GameManager.ui_theme
+		debug_panel.theme = GameManager.ui_theme
+	score_label.add_theme_font_override("font", UIKit.font_ui_bold(1))
+	score_label.add_theme_font_size_override("font_size", 42)
+	score_label.add_theme_color_override("font_color", UIKit.TEXT_HI)
+	high_score_label.add_theme_font_override("font", UIKit.font_ui_semibold(1))
+	high_score_label.add_theme_font_size_override("font_size", 26)
+	high_score_label.add_theme_color_override("font_color", UIKit.TEXT_HI)
+	# Over-gameplay text always gets an outline (design system rule).
+	for l: Label in [score_label, high_score_label]:
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
+		l.add_theme_constant_override("outline_size", 7)
+	danger_label.add_theme_font_override("font", UIKit.font_display(3))
+	danger_label.add_theme_color_override("font_color", UIKit.CORAL)
+	level_up_label.add_theme_font_override("font", UIKit.font_display(2))
+	score_label.text = "SCORE  0"
+
 func _read_challenge_config() -> void:
 	var cfg: Dictionary = GameManager.challenge_config
 	if cfg.is_empty(): return
@@ -1711,9 +1738,9 @@ func _spawn_flood_splash(x: float, color: Color) -> void:
 	_spawn_particle(pos, color)
 
 func update_hud() -> void:
-	score_label.text = "Score: %d" % GameManager.score
+	score_label.text = "SCORE  %d" % GameManager.score
 	var hs = SaveManager.get_value("high_score", 0.0)
-	high_score_label.text = "Best: %d" % int(hs)
+	high_score_label.text = "BEST  %d" % int(hs)
 	
 	if current_flood > max_flood * flood_danger_threshold:
 		danger_label.text = "DANGER!"

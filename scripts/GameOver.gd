@@ -28,6 +28,10 @@ func _ready() -> void:
 	restart_button.pressed.connect(_on_restart_pressed)
 	menu_button.pressed.connect(_on_menu_pressed)
 
+	# Verdict titles are display moments (Audiowide).
+	var title: Label = $VBoxContainer/TitleLabel
+	title.add_theme_font_override("font", UIKit.font_display(2))
+
 	# Challenge results take a different shape entirely.
 	if not GameManager.last_challenge_result.is_empty():
 		_setup_challenge_result(GameManager.last_challenge_result)
@@ -57,7 +61,8 @@ func _ready() -> void:
 	var hs := int(SaveManager.get_value("high_score", 0.0))
 	if GameManager.is_new_high_score:
 		new_hs_label.visible = true
-		_near_miss_label.text = "🏆  NEW BEST!"
+		_near_miss_label.text = "NEW BEST!"
+		_near_miss_label.add_theme_font_override("font", UIKit.font_display(2))
 		_near_miss_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.5))
 		var tween = create_tween().set_loops()
 		tween.tween_property(new_hs_label, "scale", Vector2(1.1, 1.1), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_SINE)

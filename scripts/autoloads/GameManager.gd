@@ -1,5 +1,7 @@
 extends Node
 
+const ThemeFactory = preload("res://scripts/ui/ThemeFactory.gd")
+
 var current_scene: Node = null
 var root_scene: Node = null
 
@@ -7,8 +9,15 @@ var score: int = 0
 var survival_time: float = 0.0
 var is_new_high_score: bool = false
 
+var ui_theme: Theme
+
 func _ready() -> void:
-	pass
+	# Global design system: every Control in every scene inherits the premium
+	# theme (fonts, buttons, panels, sliders). See docs/DESIGN_SYSTEM.md.
+	# NOTE: window.theme does NOT propagate through plain Node ancestors (Main
+	# is a Node), so change_scene() also stamps the theme onto scene roots.
+	ui_theme = ThemeFactory.build()
+	get_window().theme = ui_theme
 
 func change_scene(scene_path: String) -> void:
 	if root_scene == null:
@@ -21,6 +30,8 @@ func change_scene(scene_path: String) -> void:
 	var new_scene_resource := load(scene_path)
 	if new_scene_resource:
 		current_scene = new_scene_resource.instantiate()
+		if current_scene is Control and ui_theme:
+			current_scene.theme = ui_theme
 		root_scene.add_child(current_scene)
 	else:
 		push_error("Failed to load scene: " + scene_path)

@@ -10,6 +10,10 @@ var _tween: Tween = null
 
 func _ready() -> void:
 	z_index = 200
+	# Floating score text sits over gameplay: bold + outlined for readability.
+	label.add_theme_font_override("font", preload("res://scripts/ui/UIKit.gd").font_ui_bold(1))
+	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	label.add_theme_constant_override("outline_size", 6)
 	if not _pool:
 		start_animation()
 

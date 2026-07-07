@@ -23,9 +23,18 @@ func _ready() -> void:
 	var hs: float = SaveManager.get_value("high_score", 0.0)
 	high_score_label.text = "High Score: %d" % int(hs)
 
-	# Premium button styling across the menu.
+	# Premium styling across the menu (docs/DESIGN_SYSTEM.md).
+	var title: Label = $VBoxContainer/TitleLabel
+	title.add_theme_font_override("font", UIKit.font_display(3))
+	title.add_theme_color_override("font_color", UIKit.CYAN.lightened(0.25))
+	title.add_theme_color_override("font_shadow_color", Color(UIKit.CYAN.r, UIKit.CYAN.g, UIKit.CYAN.b, 0.45))
+	title.add_theme_constant_override("shadow_outline_size", 12)
+	high_score_label.add_theme_font_override("font", UIKit.font_ui_semibold(2))
+	high_score_label.add_theme_color_override("font_color", UIKit.TEXT_MID)
+
 	UIKit.style_button(start_button, Color(0.35, 0.95, 1.0), true)
 	start_button.add_theme_font_size_override("font_size", 34)
+	start_button.custom_minimum_size = Vector2(0, 76)
 	UIKit.style_button($VBoxContainer/ShopButton, Color(0.55, 0.8, 1.0), false)
 	UIKit.style_button($VBoxContainer/SettingsButton, Color(0.5, 0.65, 0.85), false)
 

@@ -1,5 +1,7 @@
 extends Control
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 @onready var sfx_slider: HSlider = $VBox/Margin/VBox/SFXHBox/SFXSlider
 @onready var bgm_slider: HSlider = $VBox/Margin/VBox/BGMHBox/BGMSlider
 @onready var haptics_btn: CheckButton = $VBox/Margin/VBox/HapticsHBox/HapticsButton
@@ -7,6 +9,17 @@ extends Control
 
 func _ready() -> void:
 	back_button.pressed.connect(_on_back)
+
+	# Design-system styling: display title + tracked caps back button.
+	var title := get_node_or_null("VBox/Header/TitleLabel")
+	if title == null:
+		for c in get_node("VBox/Header").get_children():
+			if c is Label: title = c; break
+	if title:
+		title.add_theme_font_override("font", UIKit.font_display(2))
+		title.add_theme_font_size_override("font_size", 30)
+		title.add_theme_color_override("font_color", UIKit.CYAN.lightened(0.25))
+	back_button.text = "‹  BACK"
 	
 	sfx_slider.value = AudioManager.sfx_volume * 100.0
 	bgm_slider.value = AudioManager.bgm_volume * 100.0

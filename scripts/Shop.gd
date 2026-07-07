@@ -1,5 +1,7 @@
 extends Control
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 const UPGRADES = {
 	"freeze_duration": {"name": "Freeze Duration", "desc": "Increases freeze time.", "base_cost": 100, "cost_mult": 1.5, "max_level": 5},
 	"bomb_radius": {"name": "Bomb Radius", "desc": "Increases explosion size.", "base_cost": 100, "cost_mult": 1.5, "max_level": 5},
@@ -84,7 +86,9 @@ func _ready() -> void:
 	_refresh_ui()
 
 func _refresh_ui() -> void:
-	droplets_label.text = "Droplets: %d" % ThemeManager.get_droplets()
+	droplets_label.text = "DROPLETS  %d" % ThemeManager.get_droplets()
+	droplets_label.add_theme_font_override("font", UIKit.font_ui_semibold(1))
+	droplets_label.add_theme_color_override("font_color", UIKit.COL_DROPLET.lightened(0.25))
 	
 	for c in list_container.get_children():
 		c.queue_free()

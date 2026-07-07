@@ -7,10 +7,65 @@ const ICON_PRISM := 1
 const ICON_CORE := 2
 const ICON_DROPLET := 3
 
-const COL_TICKET := Color(1.0, 0.78, 0.25)
-const COL_PRISM := Color(0.75, 0.45, 1.0)
-const COL_CORE := Color(0.25, 1.0, 0.75)
+# --- Palette (docs/DESIGN_SYSTEM.md §2) ---
+const INK_0 := Color("04070d")
+const INK_1 := Color("0a101c")
+const INK_2 := Color("121a2b")
+const TEXT_HI := Color("f2f7ff")
+const TEXT_MID := Color("9fb0c8")
+const TEXT_LOW := Color("5c6b82")
+const CYAN := Color("37e6ff")
+const TEAL := Color("2effc4")
+const GOLD := Color("ffc53d")
+const VIOLET := Color("b879ff")
+const CORAL := Color("ff5c4d")
+
+const COL_TICKET := GOLD
+const COL_PRISM := VIOLET
+const COL_CORE := TEAL
 const COL_DROPLET := Color(0.4, 0.75, 1.0)
+
+# --- Fonts (runtime-loaded, import-independent; OFL licensed, bundled) ---
+static var _f_display: FontFile = null
+static var _f_ui: Dictionary = {} # weight name -> FontFile
+static var _f_variations: Dictionary = {} # cache key -> FontVariation
+
+static func _load_font(path: String) -> FontFile:
+	var f := FontFile.new()
+	f.load_dynamic_font(path)
+	return f
+
+static func font_display(spacing: int = 2) -> Font:
+	if _f_display == null:
+		_f_display = _load_font("res://assets/fonts/Audiowide-Regular.ttf")
+	if spacing == 0:
+		return _f_display
+	return _variation(_f_display, "display", spacing)
+
+static func _font_weight(weight: String) -> FontFile:
+	if not _f_ui.has(weight):
+		_f_ui[weight] = _load_font("res://assets/fonts/Rajdhani-%s.ttf" % weight)
+	return _f_ui[weight]
+
+static func font_ui() -> Font:
+	return _font_weight("Medium")
+
+static func font_ui_semibold(spacing: int = 0) -> Font:
+	var f := _font_weight("SemiBold")
+	return f if spacing == 0 else _variation(f, "sb", spacing)
+
+static func font_ui_bold(spacing: int = 0) -> Font:
+	var f := _font_weight("Bold")
+	return f if spacing == 0 else _variation(f, "b", spacing)
+
+static func _variation(base: Font, key: String, spacing: int) -> FontVariation:
+	var cache_key := "%s_%d" % [key, spacing]
+	if not _f_variations.has(cache_key):
+		var v := FontVariation.new()
+		v.base_font = base
+		v.spacing_glyph = spacing
+		_f_variations[cache_key] = v
+	return _f_variations[cache_key]
 
 const ICON_SHADER_CODE := "
 shader_type canvas_item;
@@ -122,6 +177,7 @@ static func chip(icon_type: int, text: String, icon_size: float = 26.0, font_siz
 	var l := Label.new()
 	l.name = "Value"
 	l.text = text
+	l.add_theme_font_override("font", font_ui_semibold(1))
 	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", tint.lightened(0.35))
 	h.add_child(l)
@@ -175,10 +231,11 @@ static func style_button(b: Button, accent: Color, filled: bool = false) -> void
 	b.add_theme_stylebox_override("pressed", pressed)
 	b.add_theme_stylebox_override("disabled", disabled)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.add_theme_font_override("font", font_ui_semibold(2))
 	b.add_theme_color_override("font_color", accent.lightened(0.45))
 	b.add_theme_color_override("font_hover_color", accent.lightened(0.6))
 	b.add_theme_color_override("font_pressed_color", Color.WHITE)
-	b.add_theme_color_override("font_disabled_color", Color(0.45, 0.47, 0.52))
+	b.add_theme_color_override("font_disabled_color", TEXT_LOW)
 
 ## Electric card panel (the Shop-card shader). Put content in .content.
 ## A PanelContainer so its minimum size comes from the content (works in VBoxes);
@@ -213,13 +270,17 @@ class ElectricPanel extends PanelContainer:
 		if _rect and _rect.material:
 			_rect.material.set_shader_parameter("line_color", accent)
 
-static func heading(text: String, font_size: int, color: Color) -> Label:
+## display=true -> Audiowide (screen titles, big moments); else Rajdhani Bold caps.
+static func heading(text: String, font_size: int, color: Color, display: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
+	l.add_theme_font_override("font", font_display(2) if display else font_ui_bold(3))
 	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", color)
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	l.add_theme_constant_override("outline_size", 6)
+	l.add_theme_color_override("font_shadow_color", Color(color.r, color.g, color.b, 0.35))
+	l.add_theme_constant_override("shadow_offset_x", 0)
+	l.add_theme_constant_override("shadow_offset_y", 0)
+	l.add_theme_constant_override("shadow_outline_size", 8)
 	return l
 
 ## Small filled tag pill, e.g. "BOSS".
@@ -237,7 +298,8 @@ static func tag(text: String, accent: Color) -> PanelContainer:
 	panel.add_theme_stylebox_override("panel", st)
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", 15)
+	l.add_theme_font_override("font", font_ui_semibold(2))
+	l.add_theme_font_size_override("font_size", 14)
 	l.add_theme_color_override("font_color", accent.lightened(0.5))
 	panel.add_child(l)
 	return panel
