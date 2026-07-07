@@ -1239,9 +1239,12 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.spawn_formation_duration = 0.1 # Shoot up instantly!
 		var travel_dist = (spawn_y - get_screen_top()) * randf_range(0.75, 0.95)
 		drop.fall_velocity = -sqrt(2.0 * 1500.0 * travel_dist) # Dynamically calculate velocity to reach near the top!
-	elif ev == "overdrive": 
+	elif ev == "overdrive":
 		drop.spawn_formation_duration *= 0.5 # Form faster during overdrive
-	
+
+	# Everything is configured — NOW run the drip animation with the real parameters.
+	drop.start_formation()
+
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
 
@@ -1249,26 +1252,29 @@ func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_veloci
 	if pool_manager == null: return
 	var drop = pool_manager.get_drop()
 	drop.gameplay_ref = self
-	
-	if initial_velocity_y != 0.0:
-		drop.fall_velocity = initial_velocity_y
-		if drop.has_method("force_fall"):
-			drop.force_fall()
-	else:
-		drop.fall_velocity = current_drop_speed
-		
+
 	drop.bounce_velocity_x = custom_vel_x
 	drop.flood_damage = flood_damage_per_miss
 	drop.type = t
 	drop.custom_scale_mult = scale_mult # Apply scale before generating stats!
-	
+
 	if drop.has_method("apply_stats"):
 		drop.apply_stats()
-		
+
 	drop.queue_redraw()
 	drop.position = pos
 	drop.spawn_formation_duration = 0.2
-	
+
+	# Configure FIRST, then launch — force_fall/start_formation snap to the real
+	# type/scale (previously force_fall ran before apply_stats, so meteor splits
+	# snapped to the wrong shape).
+	if initial_velocity_y != 0.0:
+		drop.fall_velocity = initial_velocity_y
+		drop.force_fall()
+	else:
+		drop.fall_velocity = current_drop_speed
+		drop.start_formation()
+
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
 

@@ -112,6 +112,7 @@ var fall_velocity: float = 0.0
 const BOUNCE_GRAVITY := 3000.0
 var is_bouncing: bool = false
 var bounce_vel_y: float = 0.0
+var release_boost: float = 0.0 # decaying extra jiggle right after detaching from the ceiling
 
 var tex_drop_base = null
 var tex_drop_high = null
@@ -193,84 +194,75 @@ func on_pool_activate(pool: Node) -> void:
 		collision_shape.shape.radius = drop_radius * 2.5
 		
 	visuals.scale = Vector2.ONE
-	
+
 	if _tween and _tween.is_valid():
 		_tween.kill()
-	
-	var actual_duration = spawn_formation_duration * theme_cache.get("form_mult", 1.0)
-	var s_type = theme_cache.get("shader_type", 0)
-	var final_radius = 40.0 * size_m
-	var final_y = 50.0
-	
-	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
-		final_radius = 54.0 * size_m
-		final_y = 50.0
-	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
-		final_radius = 35.0 * size_m
-		final_y = 70.0
-	
-	# Start as a tiny blob on the ceiling
+
+	# Show the pre-formation state (tiny blob on the ceiling) but do NOT start the
+	# formation tween here: Gameplay configures type/size/duration AFTER activation,
+	# so starting now would animate with stale parameters (the old "formation runs
+	# wrong" bug). Gameplay calls start_formation() once the drop is configured.
 	fluid_rect.material.set_shader_parameter("drop_y", 25.0)
 	fluid_rect.material.set_shader_parameter("drop_radius", 5.0)
 	fluid_rect.material.set_shader_parameter("anchor_multiplier", 1.0)
-	
+
+func _get_form_targets() -> Dictionary:
+	# Single source of truth for the fully-formed shader shape (used by both the
+	# formation tween and force_fall so they can never diverge).
+	var size_m = theme_cache.get("size_mult", 1.0) if theme_cache else 1.0
+	var s_type = theme_cache.get("shader_type", 0) if theme_cache else 0
+	var t = {"radius": 35.0 * size_m, "y": 50.0}
+	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
+		t.radius = 48.0 * size_m
+	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
+		t.radius = 31.0 * size_m
+		t.y = 70.0
+	return t
+
+func start_formation() -> void:
+	# Called by Gameplay AFTER the drop is fully configured (type, scale, duration).
+	if state != DropState.FORMING: return
+	if _tween and _tween.is_valid():
+		_tween.kill()
+
+	var actual_duration = maxf(0.05, spawn_formation_duration * theme_cache.get("form_mult", 1.0))
+	var s_type = theme_cache.get("shader_type", 0)
+	var targets = _get_form_targets()
+
 	_tween = create_tween()
 	_tween.set_parallel(true)
-	# Phase 1: Build mass
-	_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_radius", val), 5.0, final_radius, actual_duration * 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-	
+	# Phase 1 (45%): liquid gathers mass — slight jelly overshoot as it swells.
+	_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_radius", val), 5.0, targets.radius, actual_duration * 0.45).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+
 	_tween.chain().set_parallel(true)
-	# Phase 2: Weight pulls it down.
+	# Phase 2 (55%): weight pulls it down; the anchor tail thins and lets go.
 	if s_type == 6:
-		_tween.tween_property(coin_rect, "position:y", -60.0, actual_duration * 0.5).from(-110.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
-		_tween.tween_method(func(val):
-			if icon_label and icon_label.visible:
-				icon_label.position.y = val - 28
-		, 25.0, final_y, actual_duration * 0.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		_tween.tween_property(coin_rect, "position:y", -60.0, actual_duration * 0.55).from(-110.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
 	else:
-		_tween.tween_method(func(val): 
-			fluid_rect.material.set_shader_parameter("drop_y", val)
-			if icon_label and icon_label.visible:
-				icon_label.position.y = val - 28
-		, 25.0, final_y, actual_duration * 0.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
-		
-		# Fade out the anchor during the final moments of Phase 2 so it detaches naturally
-		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.1).set_delay(actual_duration * 0.4)
-		
-		# Falling begins on the single chained callback below, exactly when the drip
-		# (drop_y) and anchor finish — a seam-free hand-off with no double-move at release.
-	
-	_tween.chain().tween_callback(func():
-		if state == DropState.FORMING:
-			state = DropState.FALLING
-			collision_shape.set_deferred("disabled", false)
-	)
+		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_y", val), 25.0, targets.y, actual_duration * 0.55).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		# The tail detaches over the final stretch of the descent.
+		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.22).set_delay(actual_duration * 0.33)
+
+	_tween.chain().tween_callback(_on_formation_finished)
+
+func _on_formation_finished() -> void:
+	if state != DropState.FORMING: return
+	state = DropState.FALLING
+	collision_shape.set_deferred("disabled", false)
+	release_boost = 1.0 # brief extra jiggle as the drop lets go of the ceiling
 
 func force_fall() -> void:
 	if _tween and _tween.is_valid():
 		_tween.kill()
 	state = DropState.FALLING
 	collision_shape.set_deferred("disabled", false)
-	
+
 	# Instantly snap visuals to their fully formed state
-	var size_m = theme_cache.get("size_mult", 1.0)
-	var final_radius = 40.0 * size_m
-	var final_y = 50.0
-	var s_type = theme_cache.get("shader_type", 0)
-	
-	if s_type == 1 or s_type == 2 or s_type == 6:
-		final_radius = 54.0 * size_m
-		final_y = 35.0
-	elif s_type == 0 or s_type == 3:
-		final_radius = 35.0 * size_m
-		final_y = 70.0
-		
-	fluid_rect.material.set_shader_parameter("drop_y", final_y)
-	fluid_rect.material.set_shader_parameter("drop_radius", final_radius)
+	var targets = _get_form_targets()
+	fluid_rect.material.set_shader_parameter("drop_y", targets.y)
+	fluid_rect.material.set_shader_parameter("drop_radius", targets.radius)
 	fluid_rect.material.set_shader_parameter("anchor_multiplier", 0.0)
 	coin_rect.position.y = -60.0
-	if icon_label and icon_label.visible:
-		icon_label.position.y = final_y - 28
 
 func on_pool_deactivate() -> void:
 	state = DropState.INACTIVE
@@ -375,6 +367,11 @@ func _process(delta: float) -> void:
 	var wobble_amp = 0.04
 	if s_type == 2: wobble_amp = 0.12 # Slime wobbles a lot
 	elif s_type == 1: wobble_amp = 0.01 # Lava wobbles very little
+
+	# Fresh-release jiggle: the drop wobbles harder for a beat after letting go.
+	if release_boost > 0.0:
+		wobble_amp += 0.10 * release_boost
+		release_boost = maxf(0.0, release_boost - delta * 3.0)
 	
 	var time_sec = Time.get_ticks_msec() / 1000.0
 	var wobble_x = sin(time_sec * 15.0 + get_instance_id()) * wobble_amp
