@@ -10,7 +10,10 @@ enum DropType {
 	GOLD,
 	METEOR,
 	ACID,
-	NEUTRALIZER
+	NEUTRALIZER,
+	SHIELDED,   # hex forcefield: first tap shatters the shield, second pops
+	CLOCKWORK,  # rhythm: tap when the shrinking ring hits the drop, or be deflected
+	PHANTOM,    # phases between solid and untappable ghost
 }
 
 signal popped(drop_node: Area2D)
@@ -64,6 +67,8 @@ func apply_stats() -> void:
 		tap_health = 1
 		drop_radius = 40.0 * theme_mult * custom_scale_mult
 
+	shield_hp = 1 if type == DropType.SHIELDED else 0
+
 	# All special-drop symbols are drawn in _draw() now (one system = consistent
 	# centering), so the old emoji label stays hidden. (ACID previously showed a ☠
 	# label AND a drawn X — a double symbol.)
@@ -113,6 +118,16 @@ const BOUNCE_GRAVITY := 3000.0
 var is_bouncing: bool = false
 var bounce_vel_y: float = 0.0
 var release_boost: float = 0.0 # decaying extra jiggle right after detaching from the ceiling
+
+# --- New-mechanic state (SHIELDED / CLOCKWORK / PHANTOM) ---
+const CLOCK_PERIOD := 1.3
+var shield_hp: int = 0
+var clock_t: float = 0.0
+var clock_bad_taps: int = 0
+var clock_flash: float = 0.0   # red mistime flash, decays
+var perfect_pop: bool = false
+var phantom_t: float = 0.0
+var is_ghost: bool = false
 
 var tex_drop_base = null
 var tex_drop_high = null
@@ -185,6 +200,13 @@ func on_pool_activate(pool: Node) -> void:
 	meteor_generation = 0
 	is_targeted_by_turret = false
 	is_boss_drop = false
+	shield_hp = 0
+	clock_t = randf() * CLOCK_PERIOD
+	clock_bad_taps = 0
+	clock_flash = 0.0
+	perfect_pop = false
+	phantom_t = randf() * 1.8
+	is_ghost = false
 	
 	var current_color = get_current_color()
 	fluid_rect.material.set_shader_parameter("water_color", current_color)
@@ -348,6 +370,18 @@ func _process(delta: float) -> void:
 			position.x = 660.0
 			bounce_velocity_x = -abs(bounce_velocity_x)
 			
+	# --- New-mechanic per-frame behaviour ---
+	if type == DropType.CLOCKWORK:
+		clock_t += delta * multiplier
+		clock_flash = maxf(0.0, clock_flash - delta * 3.0)
+	elif type == DropType.PHANTOM:
+		phantom_t += delta * multiplier
+		var ghost: bool = fmod(phantom_t, 1.8) > 0.95
+		if ghost != is_ghost:
+			is_ghost = ghost
+			collision_shape.set_deferred("disabled", is_ghost)
+		modulate.a = lerpf(modulate.a, 0.26 if is_ghost else 1.0, delta * 9.0)
+
 	if is_glitching:
 		glitch_timer += delta * multiplier
 		if glitch_timer > next_glitch_target:
@@ -469,9 +503,46 @@ func _update_shader_liquid_type() -> void:
 		fluid_rect.show()
 		fluid_rect.material.set_shader_parameter("liquid_type", s_type)
 
+func _clock_ring_scale() -> float:
+	# The ring shrinks from 2.35x onto the drop (1.0x) each cycle.
+	var phase := fmod(clock_t, CLOCK_PERIOD) / CLOCK_PERIOD
+	return 2.35 - 1.35 * phase
+
+func _clock_in_window() -> bool:
+	return _clock_ring_scale() <= 1.28 # the final beat of the cycle
+
 func pop() -> void:
 	if state == DropState.POPPING or state == DropState.INACTIVE: return
-	
+
+	if type == DropType.PHANTOM and is_ghost:
+		return # ghosts can't be touched (collision is off; this is a safety net)
+
+	if type == DropType.SHIELDED and shield_hp > 0:
+		# First tap: the forcefield SHATTERS.
+		shield_hp = 0
+		fall_velocity = minf(fall_velocity, fall_speed) * 0.5 # staggered, briefly easier
+		release_boost = 1.0
+		if gameplay_ref and gameplay_ref.has_method("_spawn_shield_shards"):
+			gameplay_ref._spawn_shield_shards(global_position, Color(0.45, 0.85, 1.0))
+		AudioManager.play_sfx("pop", 1.6)
+		AudioManager.vibrate("pop")
+		queue_redraw()
+		return
+
+	if type == DropType.CLOCKWORK:
+		if not _clock_in_window():
+			# Mistimed: the tap is DEFLECTED — it bounces and gets angrier.
+			clock_bad_taps += 1
+			if clock_bad_taps < 3: # 3rd bad tap pops anyway (anti-frustration)
+				clock_flash = 1.0
+				fall_velocity = -260.0
+				fall_speed *= 1.08
+				AudioManager.play_sfx("button", 0.6)
+				AudioManager.vibrate("miss")
+				return
+		else:
+			perfect_pop = true
+
 	if is_pinata:
 		bounce_velocity_x *= 1.15
 		fall_velocity = -400.0 # Pop back up!
@@ -605,6 +676,11 @@ func _draw() -> void:
 		DropType.ACID: base_col = Color(0.8, 1.0, 0.1, 1.0)
 		DropType.METEOR: base_col = Color(0.1, 0.8, 0.1, 1.0)
 		DropType.NEUTRALIZER: base_col = Color(0.3, 1.0, 0.9, 1.0)
+		DropType.SHIELDED:
+			if shield_hp <= 0: return # shield shattered -> plain liquid drop again
+			base_col = Color(0.45, 0.85, 1.0, 1.0)
+		DropType.CLOCKWORK: base_col = Color(1.0, 0.75, 0.25, 1.0)
+		DropType.PHANTOM: base_col = Color(0.72, 0.55, 1.0, 1.0)
 
 	var glow_col = base_col
 	
@@ -667,3 +743,36 @@ func _draw() -> void:
 			base_col = Color(0.2, 0.9, 0.2, 1.0)
 			# Draw a rock-like texture/lines
 			draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0 * current_scale)
+		DropType.SHIELDED:
+			# Rotating hexagonal forcefield with a travelling shimmer
+			var sh_t = Time.get_ticks_msec() / 1000.0
+			var sh_r = size * 1.6
+			var sh_pts := PackedVector2Array()
+			for i in range(7):
+				var a = sh_t * 1.3 + TAU * float(i) / 6.0
+				sh_pts.append(Vector2(cos(a), sin(a)) * sh_r)
+			draw_polyline(sh_pts, Color(0.5, 0.9, 1.0, 0.28), 9.0 * current_scale)
+			draw_polyline(sh_pts, Color(0.62, 0.93, 1.0, 0.95), 3.2 * current_scale)
+			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.4), 2.0 * current_scale)
+		DropType.CLOCKWORK:
+			# The rhythm ring: shrinks onto the drop; gold-white = tap NOW
+			var cw_rs = _clock_ring_scale()
+			var cw_r = size * 2.0 * cw_rs
+			var in_win = _clock_in_window()
+			var cw_c = Color(1.0, 0.85, 0.3, 0.95) if in_win else Color(1.0, 0.55, 0.15, 0.65)
+			if clock_flash > 0.0:
+				cw_c = cw_c.lerp(Color(1.0, 0.2, 0.15, 1.0), clock_flash)
+			draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, cw_c, (5.0 if in_win else 3.0) * current_scale)
+			if in_win:
+				draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, Color(1, 1, 1, 0.55), 1.8 * current_scale)
+			# Target notches at the sweet radius
+			for i in range(4):
+				var na = TAU * float(i) / 4.0 + PI / 4.0
+				var nd = Vector2(cos(na), sin(na))
+				draw_line(nd * size * 1.85, nd * size * 2.12, Color(1.0, 0.85, 0.4, 0.75), 2.4 * current_scale)
+		DropType.PHANTOM:
+			# Spectral orbit dashes — the tell that it phases
+			var ph_t = Time.get_ticks_msec() / 1000.0
+			for i in range(8):
+				var pa = ph_t * 1.5 + TAU * float(i) / 8.0
+				draw_arc(Vector2.ZERO, size * 1.5, pa, pa + 0.34, 6, Color(0.75, 0.6, 1.0, 0.65), 2.4 * current_scale)

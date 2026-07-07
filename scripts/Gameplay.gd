@@ -1,6 +1,7 @@
 extends Node
 
 const UIKit = preload("res://scripts/ui/UIKit.gd")
+const StormSerpent = preload("res://scripts/bosses/StormSerpent.gd")
 
 enum ForceDropType {
 	NONE = -1,
@@ -132,6 +133,7 @@ var boss_phase: int = -1
 var boss_timer: float = 0.0
 var boss_drop_ref: Area2D = null
 var boss_max_hp: float = 24.0
+var serpent_ref: Node2D = null
 
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
@@ -686,9 +688,11 @@ func _check_challenge_win() -> void:
 			met = current_multiplier >= int(v)
 			prog = float(current_multiplier - 1) / maxf(1.0, v - 1.0)
 		"boss":
-			met = false # won only by killing the boss drop (see _on_drop_popped)
+			met = false # won only by killing the boss (drop pop / serpent signal)
 			prog = minf(0.6, maxf(0.0, boss_phase) * 0.15)
-			if boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
+			if boss_phase == 4 and serpent_ref != null and is_instance_valid(serpent_ref):
+				prog = 0.6 + 0.4 * serpent_ref.get_progress()
+			elif boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
 				prog = 0.6 + 0.4 * (1.0 - float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
 	GameManager.challenge_progress = clampf(prog, 0.0, 1.0) # feeds Second Wind
 	if met:
@@ -744,15 +748,36 @@ func _boss_tick(delta: float) -> void:
 				boss_timer = 14.0
 		3:
 			if boss_timer <= 0:
-				_spawn_boss_drop()
+				_spawn_boss()
 				boss_phase = 4
 		4:
+			if serpent_ref != null:
+				pass # the Serpent runs its own show
 			# The Warden escaped off the bottom without dying? It returns, angrier.
-			if boss_drop_ref == null or not is_instance_valid(boss_drop_ref) \
+			elif boss_drop_ref == null or not is_instance_valid(boss_drop_ref) \
 					or boss_drop_ref.state == boss_drop_ref.DropState.INACTIVE:
 				if not challenge_done:
 					_start_event("IT RETURNS…", 2.0, active_event, Color(1.0, 0.4, 1.0))
 					_spawn_boss_drop()
+
+func _spawn_boss() -> void:
+	# Boss archetype per challenge def: "titan" (giant drop) or "serpent".
+	if str(challenge_def.get("boss_type", "titan")) == "serpent":
+		_spawn_serpent_boss()
+	else:
+		_spawn_boss_drop()
+
+func _spawn_serpent_boss() -> void:
+	_start_event("THE SERPENT RISES", 3.0, active_event, Color(0.6, 1.0, 0.6))
+	shake_intensity = screen_shake_strength * 2.5
+	var s := StormSerpent.new()
+	var t = ThemeManager.get_equipped_theme()
+	s.accent = t.get("drop_color", Color(0.4, 1.0, 0.5))
+	s.gameplay = self
+	add_child(s)
+	s.defeated.connect(_challenge_win)
+	s.flood_damage.connect(func(amt): _on_drop_missed(amt, false))
+	serpent_ref = s
 
 func _spawn_boss_drop() -> void:
 	_start_event("THE WARDEN APPEARS", 3.0, active_event, Color(0.9, 0.4, 1.0))
@@ -1359,7 +1384,8 @@ func _trigger_chaos_event() -> void:
 func _count_active_powerups() -> int:
 	var count = 0
 	for d in drop_container.get_children():
-		if d.has_method("pop") and d.state != d.DropState.INACTIVE and d.state != d.DropState.POPPING and d.type != d.DropType.NORMAL:
+		if d.has_method("pop") and d.state != d.DropState.INACTIVE and d.state != d.DropState.POPPING \
+				and d.type >= d.DropType.DRAIN and d.type <= d.DropType.RAINBOW:
 			count += 1
 	return count
 
@@ -1416,6 +1442,14 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 				if randf() < current_power_up_chance:
 					chosen_type = _pick_random_powerup()
 					
+	# Challenge special rain: a share of normal drops become the stage's new-mechanic type.
+	if is_challenge and chosen_type == drop.DropType.NORMAL \
+			and challenge_mods.has("special_rain") and randf() < 0.45:
+		match str(challenge_mods.special_rain):
+			"shielded": chosen_type = drop.DropType.SHIELDED
+			"clockwork": chosen_type = drop.DropType.CLOCKWORK
+			"phantom": chosen_type = drop.DropType.PHANTOM
+
 	drop.type = chosen_type
 	if is_challenge and chosen_type == drop.DropType.NORMAL and challenge_mods.has("tiny_drops"):
 		drop.custom_scale_mult = challenge_mods.tiny_drops
@@ -1646,6 +1680,25 @@ func _on_drop_popped(drop_node: Area2D) -> void:
 			_spawn_particle(pos, drop_node.get_current_color())
 			AudioManager.play_sfx("power_up")
 			_update_flood_visual_smooth(0.0)
+		drop_node.DropType.SHIELDED, drop_node.DropType.PHANTOM:
+			GameManager.score += final_score
+			_spawn_floating_text("+%d%s" % [final_score, mult_text], pos, m_color)
+			_spawn_particle(pos, drop_node.get_current_color())
+			AudioManager.play_sfx("pop", pitch)
+			AudioManager.vibrate("pop")
+		drop_node.DropType.CLOCKWORK:
+			var cw_score = final_score * (2 if drop_node.perfect_pop else 1)
+			GameManager.score += cw_score
+			if drop_node.perfect_pop:
+				_spawn_floating_text("PERFECT! +%d" % cw_score, pos, Color(1.0, 0.9, 0.4))
+				_spawn_ripple(pos, Color(1.0, 0.85, 0.3), 1.7)
+				trigger_hit_pause(0.03)
+				AudioManager.play_sfx("rainbow")
+			else:
+				_spawn_floating_text("+%d%s" % [cw_score, mult_text], pos, m_color)
+				AudioManager.play_sfx("pop", pitch * 1.15)
+			_spawn_particle(pos, Color(1.0, 0.8, 0.3))
+			AudioManager.vibrate("pop")
 		drop_node.DropType.ACID:
 			var toxic_score = final_score * 5
 			GameManager.score += toxic_score
@@ -1730,6 +1783,25 @@ func _spawn_ripple(pos: Vector2, color: Color, max_scale: float = 1.4) -> void:
 	tw.tween_property(ring, "scale", Vector2(max_scale, max_scale * 0.65), 0.32).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_property(ring, "modulate:a", 0.0, 0.32)
 	tw.tween_callback(ring.queue_free)
+
+func _spawn_shield_shards(pos: Vector2, col: Color) -> void:
+	# Hex-shield shatter: six glowing fragments fly outward and fade.
+	for i in range(6):
+		var ang := TAU * float(i) / 6.0 + randf_range(-0.25, 0.25)
+		var dirv := Vector2(cos(ang), sin(ang))
+		var ln := Line2D.new()
+		ln.default_color = col
+		ln.width = 3.5
+		ln.add_point(pos + dirv * 20.0)
+		ln.add_point(pos + dirv * 40.0)
+		ln.material = _additive_material()
+		ln.z_index = 80
+		add_child(ln)
+		var tw := create_tween()
+		tw.tween_property(ln, "position", dirv * randf_range(55.0, 105.0), 0.32).set_ease(Tween.EASE_OUT)
+		tw.parallel().tween_property(ln, "modulate:a", 0.0, 0.32)
+		tw.tween_callback(ln.queue_free)
+	_spawn_ripple(pos, col, 1.15)
 
 func _spawn_flood_splash(x: float, color: Color) -> void:
 	# Splash where the drop enters the water (the current flood surface).
