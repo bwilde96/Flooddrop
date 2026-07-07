@@ -1,6 +1,8 @@
 extends Control
 ## The Gauntlet — challenge select + ability tree ("Powers").
-## UI is built in code (same pattern as Shop.gd's dynamic sections).
+## Premium procedural UI built from UIKit (electric cards, shader icons, neon buttons).
+
+const UIKit = preload("res://scripts/ui/UIKit.gd")
 
 const STAGE_TITLES := ["The Deluge", "The Bounce House", "The Furnace", "The Refinery",
 	"The Vault", "The Dark Prism", "The Grid", "The Void"]
@@ -8,51 +10,59 @@ const STAGE_THEMES := ["water", "slime", "lava", "acid", "gold", "rainbow", "neo
 
 var current_tab := "challenges"
 var list: VBoxContainer
-var tickets_label: Label
-var prisms_label: Label
-var cores_label: Label
-var droplets_label: Label
+var tickets_chip: PanelContainer
+var prisms_chip: PanelContainer
+var cores_chip: PanelContainer
+var droplets_chip: PanelContainer
+var tabs_box: HBoxContainer
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
-	var dim := ColorRect.new()
-	dim.color = Color(0.02, 0.03, 0.06, 0.82)
+	# Depth: dark vignette gradient over the animated menu background.
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.01, 0.02, 0.05, 0.93))
+	grad.set_color(1, Color(0.03, 0.05, 0.10, 0.80))
+	var gtex := GradientTexture2D.new()
+	gtex.gradient = grad
+	gtex.fill_from = Vector2(0.5, 0.0)
+	gtex.fill_to = Vector2(0.5, 1.0)
+	var dim := TextureRect.new()
+	dim.texture = gtex
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
 
 	var vbox := VBoxContainer.new()
 	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
-	vbox.add_theme_constant_override("separation", 10)
+	vbox.offset_left = 14
+	vbox.offset_right = -14
+	vbox.offset_top = 10
+	vbox.offset_bottom = -10
+	vbox.add_theme_constant_override("separation", 12)
 	add_child(vbox)
 
-	# --- Header: back, title, currencies ---
+	# --- Header ---
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 14)
+	header.add_theme_constant_override("separation", 12)
 	vbox.add_child(header)
 
-	var back := Button.new()
-	back.text = "  <  "
-	back.add_theme_font_size_override("font_size", 30)
+	var back := UIKit.neon_button("‹", Color(0.55, 0.9, 1.0), Vector2(64, 56), 32)
 	back.pressed.connect(func():
 		AudioManager.play_sfx("button")
 		GameManager.goto_main_menu()
 	)
 	header.add_child(back)
 
-	var title := Label.new()
-	title.text = "THE GAUNTLET"
-	title.add_theme_font_size_override("font_size", 40)
-	title.add_theme_color_override("font_color", Color(0.55, 0.9, 1.0))
+	var title := UIKit.heading("THE GAUNTLET", 38, Color(0.62, 0.93, 1.0))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 
-	tickets_label = _currency_label(Color(1.0, 0.85, 0.3))
-	header.add_child(tickets_label)
+	tickets_chip = UIKit.chip(UIKit.ICON_TICKET, "0", 30, 25)
+	header.add_child(tickets_chip)
 
-	var buy_btn := Button.new()
-	buy_btn.text = "+"
+	var buy_btn := UIKit.neon_button("+", UIKit.COL_TICKET, Vector2(52, 52), 28)
 	buy_btn.tooltip_text = "Buy 1 ticket for %d prisms" % ChallengeManager.TICKET_PRISM_PRICE
 	buy_btn.pressed.connect(func():
 		if ChallengeManager.buy_ticket_with_prisms():
@@ -63,40 +73,31 @@ func _ready() -> void:
 	)
 	header.add_child(buy_btn)
 
+	# --- Currency row ---
 	var row2 := HBoxContainer.new()
 	row2.alignment = BoxContainer.ALIGNMENT_CENTER
-	row2.add_theme_constant_override("separation", 26)
+	row2.add_theme_constant_override("separation", 16)
 	vbox.add_child(row2)
-	prisms_label = _currency_label(Color(0.8, 0.5, 1.0))
-	cores_label = _currency_label(Color(0.3, 1.0, 0.8))
-	droplets_label = _currency_label(Color(0.55, 0.8, 1.0))
-	row2.add_child(prisms_label)
-	row2.add_child(cores_label)
-	row2.add_child(droplets_label)
+	prisms_chip = UIKit.chip(UIKit.ICON_PRISM, "0")
+	cores_chip = UIKit.chip(UIKit.ICON_CORE, "0")
+	droplets_chip = UIKit.chip(UIKit.ICON_DROPLET, "0")
+	row2.add_child(prisms_chip)
+	row2.add_child(cores_chip)
+	row2.add_child(droplets_chip)
 
 	# --- Tabs ---
-	var tabs := HBoxContainer.new()
-	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
-	tabs.add_theme_constant_override("separation", 20)
-	vbox.add_child(tabs)
-	for t in [["challenges", "CHALLENGES"], ["powers", "POWERS"]]:
-		var b := Button.new()
-		b.text = t[1]
-		b.custom_minimum_size = Vector2(220, 56)
-		b.add_theme_font_size_override("font_size", 26)
-		b.pressed.connect(func():
-			current_tab = t[0]
-			AudioManager.play_sfx("button")
-			_refresh()
-		)
-		tabs.add_child(b)
+	tabs_box = HBoxContainer.new()
+	tabs_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs_box.add_theme_constant_override("separation", 16)
+	vbox.add_child(tabs_box)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vbox.add_child(scroll)
 	list = VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", 12)
+	list.add_theme_constant_override("separation", 16)
 	scroll.add_child(list)
 
 	get_tree().set_quit_on_go_back(false)
@@ -106,20 +107,29 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		GameManager.goto_main_menu()
 
-func _currency_label(col: Color) -> Label:
-	var l := Label.new()
-	l.add_theme_font_size_override("font_size", 26)
-	l.add_theme_color_override("font_color", col)
-	return l
-
 func _refresh_header() -> void:
-	tickets_label.text = "🎟 %d" % ChallengeManager.get_tickets()
-	prisms_label.text = "◆ %d Prisms" % ChallengeManager.get_prisms()
-	cores_label.text = "⬡ %d Cores" % ChallengeManager.get_cores()
-	droplets_label.text = "💧 %d" % ChallengeManager.get_droplets()
+	UIKit.set_chip_text(tickets_chip, str(ChallengeManager.get_tickets()))
+	UIKit.set_chip_text(prisms_chip, str(ChallengeManager.get_prisms()))
+	UIKit.set_chip_text(cores_chip, str(ChallengeManager.get_cores()))
+	UIKit.set_chip_text(droplets_chip, str(ChallengeManager.get_droplets()))
+
+func _rebuild_tabs() -> void:
+	for c in tabs_box.get_children():
+		c.queue_free()
+	for t in [["challenges", "CHALLENGES"], ["powers", "POWERS"]]:
+		var active: bool = current_tab == t[0]
+		var b := UIKit.neon_button(t[1], Color(0.55, 0.9, 1.0), Vector2(230, 54), 24, active)
+		if not active:
+			b.pressed.connect(func():
+				current_tab = t[0]
+				AudioManager.play_sfx("button")
+				_refresh()
+			)
+		tabs_box.add_child(b)
 
 func _refresh() -> void:
 	_refresh_header()
+	_rebuild_tabs()
 	for c in list.get_children():
 		c.queue_free()
 	if current_tab == "challenges":
@@ -127,99 +137,116 @@ func _refresh() -> void:
 	else:
 		_build_powers()
 
+func _reward_chips(r: Dictionary) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	if r.get("droplets", 0) > 0:
+		h.add_child(UIKit.chip(UIKit.ICON_DROPLET, str(r.droplets), 20, 16))
+	if r.get("cores", 0) > 0:
+		h.add_child(UIKit.chip(UIKit.ICON_CORE, str(r.cores), 20, 16))
+	if r.get("prisms", 0) > 0:
+		h.add_child(UIKit.chip(UIKit.ICON_PRISM, str(r.prisms), 20, 16))
+	return h
+
 # ------------------------------------------------------------- CHALLENGES TAB --
 func _build_challenges() -> void:
 	for stage in range(STAGE_TITLES.size()):
 		var t = ThemeManager.get_theme(STAGE_THEMES[stage])
 		var unlocked = ChallengeManager.is_stage_unlocked(stage)
+		var accent: Color = t.get("drop_color", Color.WHITE)
+		if not unlocked:
+			accent = Color(0.28, 0.30, 0.36)
 
-		var panel := PanelContainer.new()
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.05, 0.07, 0.11, 0.92)
-		style.set_corner_radius_all(14)
-		style.set_border_width_all(2)
-		var bcol: Color = t.get("drop_color", Color.WHITE)
-		style.border_color = bcol if unlocked else Color(0.25, 0.25, 0.3)
-		panel.add_theme_stylebox_override("panel", style)
-		list.add_child(panel)
-
-		var margin := MarginContainer.new()
-		for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-			margin.add_theme_constant_override(m, 14)
-		panel.add_child(margin)
+		var card := UIKit.ElectricPanel.new(accent, 20.0, 16)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_child(card)
 
 		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 8)
-		margin.add_child(v)
+		v.add_theme_constant_override("separation", 10)
+		card.content.add_child(v)
 
-		var head := Label.new()
-		head.text = "STAGE %d — %s  ·  %s" % [stage + 1, str(t.get("name", "")).to_upper(), STAGE_TITLES[stage]]
-		head.add_theme_font_size_override("font_size", 27)
-		head.add_theme_color_override("font_color", bcol if unlocked else Color(0.5, 0.5, 0.55))
-		v.add_child(head)
+		var head_row := HBoxContainer.new()
+		head_row.add_theme_constant_override("separation", 10)
+		v.add_child(head_row)
+		var head := UIKit.heading(STAGE_TITLES[stage].to_upper(), 27,
+			accent.lightened(0.25) if unlocked else Color(0.55, 0.55, 0.6))
+		head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head_row.add_child(head)
+		var sub := Label.new()
+		sub.text = "STAGE %d · %s" % [stage + 1, str(t.get("name", "")).to_upper()]
+		sub.add_theme_font_size_override("font_size", 16)
+		sub.add_theme_color_override("font_color", Color(0.55, 0.6, 0.68))
+		head_row.add_child(sub)
 
 		if not unlocked:
 			var lock := Label.new()
-			lock.text = "🔒 Reach LEVEL %d in a run to unlock" % (stage + 1)
-			lock.add_theme_font_size_override("font_size", 20)
-			lock.add_theme_color_override("font_color", Color(0.6, 0.6, 0.65))
+			lock.text = "Reach LEVEL %d in a run to open this gate" % (stage + 1)
+			lock.add_theme_font_size_override("font_size", 19)
+			lock.add_theme_color_override("font_color", Color(0.6, 0.62, 0.68))
 			v.add_child(lock)
 			continue
 
 		var defs: Array = ChallengeManager.get_stage_challenges(stage)
 		for i in range(defs.size()):
-			v.add_child(_challenge_row(stage, i, defs[i], bcol))
+			if i > 0:
+				var sep := ColorRect.new()
+				sep.custom_minimum_size = Vector2(0, 1)
+				sep.color = Color(accent.r, accent.g, accent.b, 0.14)
+				v.add_child(sep)
+			v.add_child(_challenge_row(stage, i, defs[i], accent))
 
 func _challenge_row(stage: int, index: int, def: Dictionary, accent: Color) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", 12)
 
 	var open = ChallengeManager.is_challenge_unlocked(stage, index)
 	var done = ChallengeManager.is_completed(stage, def.id)
+	var is_boss: bool = def.get("is_boss", false)
 
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_constant_override("separation", 4)
 	row.add_child(text)
 
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 8)
+	text.add_child(name_row)
+	if is_boss:
+		name_row.add_child(UIKit.tag("BOSS", Color(1.0, 0.45, 0.35)))
+	if done:
+		name_row.add_child(UIKit.tag("CLEARED", Color(0.35, 1.0, 0.55)))
 	var name_l := Label.new()
-	name_l.text = ("✓ " if done else "") + str(def.name)
+	name_l.text = str(def.name).replace("⚔ ", "")
 	name_l.add_theme_font_size_override("font_size", 23)
 	name_l.add_theme_color_override("font_color",
-		Color(0.4, 1.0, 0.6) if done else (Color.WHITE if open else Color(0.5, 0.5, 0.55)))
-	text.add_child(name_l)
+		Color.WHITE if open else Color(0.5, 0.52, 0.58))
+	name_row.add_child(name_l)
 
 	var desc_l := Label.new()
-	desc_l.text = str(def.desc) if open else "Complete the previous challenge first"
+	desc_l.text = str(def.desc) if open else "Clear the previous trial first"
 	desc_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc_l.add_theme_font_size_override("font_size", 17)
-	desc_l.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+	desc_l.add_theme_font_size_override("font_size", 16)
+	desc_l.add_theme_color_override("font_color", Color(0.66, 0.71, 0.78))
 	text.add_child(desc_l)
 
-	var r: Dictionary = def.get("rewards", {})
-	var reward_l := Label.new()
-	var bits: Array = ["💧%d" % r.get("droplets", 0), "⬡%d" % r.get("cores", 0)]
-	if r.get("prisms", 0) > 0: bits.append("◆%d" % r.get("prisms", 0))
-	reward_l.text = "First clear:  " + "  ".join(bits)
-	reward_l.add_theme_font_size_override("font_size", 16)
-	reward_l.add_theme_color_override("font_color", accent.lightened(0.2))
-	text.add_child(reward_l)
+	if open and not done:
+		var chips := _reward_chips(def.get("rewards", {}))
+		text.add_child(chips)
 
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(150, 74)
-	btn.add_theme_font_size_override("font_size", 21)
 	if not open:
-		btn.text = "🔒"
-		btn.disabled = true
+		var lock_l := Label.new()
+		lock_l.text = "🔒"
+		lock_l.add_theme_font_size_override("font_size", 26)
+		lock_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(lock_l)
 	else:
 		var cost: int = ChallengeManager.get_attempt_cost(stage, def)
-		if done:
-			btn.text = "PRACTICE\nFREE"
-		elif cost == 0:
-			btn.text = "PLAY\nFREE TRY"
-		else:
-			btn.text = "PLAY\n1 🎟"
+		var label := "PRACTICE" if done else "PLAY"
+		var sub := "FREE" if cost == 0 else "1 TICKET"
+		var btn := UIKit.neon_button("%s\n%s" % [label, sub], accent, Vector2(148, 76), 19, not done)
+		btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		btn.pressed.connect(func(): _try_start(stage, def))
-	row.add_child(btn)
+		row.add_child(btn)
 	return row
 
 func _try_start(stage: int, def: Dictionary) -> void:
@@ -227,7 +254,7 @@ func _try_start(stage: int, def: Dictionary) -> void:
 	if cost > 0:
 		if not ChallengeManager.spend_ticket():
 			AudioManager.play_sfx("miss")
-			tickets_label.text = "🎟 0 — need tickets!"
+			UIKit.set_chip_text(tickets_chip, "0 — buy or wait!")
 			return
 	AudioManager.play_sfx("power_up")
 	GameManager.challenge_ticket_spent = cost > 0
@@ -236,69 +263,93 @@ func _try_start(stage: int, def: Dictionary) -> void:
 # ----------------------------------------------------------------- POWERS TAB --
 func _build_powers() -> void:
 	var info := Label.new()
-	info.text = "Cores (⬡) are earned by completing challenges — power is earned, never bought."
+	info.text = "Cores are earned by conquering challenges — power is earned, never bought."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.add_theme_font_size_override("font_size", 18)
-	info.add_theme_color_override("font_color", Color(0.6, 0.9, 0.8))
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	info.add_theme_font_size_override("font_size", 17)
+	info.add_theme_color_override("font_color", Color(0.55, 0.85, 0.75))
 	list.add_child(info)
 
 	var unlocked_abilities: Array = SaveManager.get_value("unlocked_abilities", ["time_warp"])
 	for ability in ChallengeManager.ABILITY_TREE.keys():
-		var panel := PanelContainer.new()
-		var style := StyleBoxFlat.new()
-		style.bg_color = Color(0.05, 0.07, 0.11, 0.92)
-		style.set_corner_radius_all(14)
-		style.set_border_width_all(2)
-		style.border_color = Color(0.3, 1.0, 0.8, 0.7) if ability in unlocked_abilities else Color(0.25, 0.25, 0.3)
-		panel.add_theme_stylebox_override("panel", style)
-		list.add_child(panel)
-
-		var margin := MarginContainer.new()
-		for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-			margin.add_theme_constant_override(m, 14)
-		panel.add_child(margin)
+		var have: bool = ability in unlocked_abilities
+		var accent := Color(0.3, 1.0, 0.8) if have else Color(0.28, 0.30, 0.36)
+		var card := UIKit.ElectricPanel.new(accent, 20.0, 16)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_child(card)
 		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 8)
-		margin.add_child(v)
+		v.add_theme_constant_override("separation", 10)
+		card.content.add_child(v)
 
-		var head := Label.new()
-		head.text = ability.replace("_", " ").to_upper()
-		head.add_theme_font_size_override("font_size", 25)
-		v.add_child(head)
+		var head_row := HBoxContainer.new()
+		head_row.add_theme_constant_override("separation", 10)
+		v.add_child(head_row)
+		var head := UIKit.heading(ability.replace("_", " ").to_upper(), 25,
+			accent.lightened(0.3) if have else Color(0.55, 0.55, 0.6))
+		head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head_row.add_child(head)
+		if not have:
+			head_row.add_child(UIKit.tag("UNLOCK IN SHOP", Color(0.7, 0.7, 0.8)))
 
 		var nodes: Array = ChallengeManager.ABILITY_TREE[ability]
 		for i in range(nodes.size()):
-			v.add_child(_node_row(ability, i, nodes[i], ability in unlocked_abilities))
+			if i > 0:
+				var sep := ColorRect.new()
+				sep.custom_minimum_size = Vector2(0, 1)
+				sep.color = Color(accent.r, accent.g, accent.b, 0.14)
+				v.add_child(sep)
+			v.add_child(_node_row(ability, i, nodes[i], have))
 
 func _node_row(ability: String, index: int, node: Dictionary, ability_unlocked: bool) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", 12)
 
 	var owned = ChallengeManager.is_node_owned(ability, node.id)
 	var open = ability_unlocked and ChallengeManager.is_node_unlockable(ability, index)
 
 	var text := VBoxContainer.new()
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.add_theme_constant_override("separation", 4)
 	row.add_child(text)
-	var name_l := Label.new()
-	name_l.text = ("✓ " if owned else "") + str(node.name) + " — " + str(node.desc)
-	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	name_l.add_theme_font_size_override("font_size", 20)
-	name_l.add_theme_color_override("font_color",
-		Color(0.4, 1.0, 0.6) if owned else (Color.WHITE if open else Color(0.5, 0.5, 0.55)))
-	text.add_child(name_l)
 
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(170, 56)
-	btn.add_theme_font_size_override("font_size", 18)
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 8)
+	text.add_child(name_row)
 	if owned:
-		btn.text = "OWNED"
-		btn.disabled = true
+		name_row.add_child(UIKit.tag("OWNED", Color(0.35, 1.0, 0.55)))
+	var name_l := Label.new()
+	name_l.text = str(node.name)
+	name_l.add_theme_font_size_override("font_size", 21)
+	name_l.add_theme_color_override("font_color",
+		Color(0.5, 1.0, 0.7) if owned else (Color.WHITE if open else Color(0.5, 0.52, 0.58)))
+	name_row.add_child(name_l)
+
+	var desc_l := Label.new()
+	desc_l.text = str(node.desc)
+	desc_l.add_theme_font_size_override("font_size", 16)
+	desc_l.add_theme_color_override("font_color", Color(0.66, 0.71, 0.78))
+	text.add_child(desc_l)
+
+	if not owned:
+		var cost_row := HBoxContainer.new()
+		cost_row.add_theme_constant_override("separation", 8)
+		cost_row.add_child(UIKit.chip(UIKit.ICON_CORE, str(node.cost_cores), 18, 15))
+		cost_row.add_child(UIKit.chip(UIKit.ICON_DROPLET, str(node.cost_droplets), 18, 15))
+		text.add_child(cost_row)
+
+	if owned:
+		pass # tag already shows it
 	elif not open:
-		btn.text = "🔒"
-		btn.disabled = true
+		var lock_l := Label.new()
+		lock_l.text = "🔒"
+		lock_l.add_theme_font_size_override("font_size", 24)
+		lock_l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(lock_l)
 	else:
-		btn.text = "⬡%d + 💧%d" % [node.cost_cores, node.cost_droplets]
+		var afford: bool = ChallengeManager.get_cores() >= node.cost_cores \
+			and ChallengeManager.get_droplets() >= node.cost_droplets
+		var btn := UIKit.neon_button("UNLOCK", Color(0.3, 1.0, 0.8), Vector2(140, 58), 19, afford)
+		btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		btn.pressed.connect(func():
 			if ChallengeManager.buy_node(ability, node.id):
 				AudioManager.play_sfx("power_up")
@@ -306,5 +357,5 @@ func _node_row(ability: String, index: int, node: Dictionary, ability_unlocked: 
 				AudioManager.play_sfx("miss")
 			_refresh()
 		)
-	row.add_child(btn)
+		row.add_child(btn)
 	return row

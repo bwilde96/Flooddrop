@@ -1,5 +1,7 @@
 extends Control
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 @onready var start_button: Button = $VBoxContainer/StartButton
 @onready var high_score_label: Label = $VBoxContainer/HighScoreLabel
 
@@ -21,12 +23,16 @@ func _ready() -> void:
 	var hs: float = SaveManager.get_value("high_score", 0.0)
 	high_score_label.text = "High Score: %d" % int(hs)
 
-	# The Gauntlet (challenge mode) entry — badge shows waiting tickets.
-	var ch_btn := Button.new()
+	# Premium button styling across the menu.
+	UIKit.style_button(start_button, Color(0.35, 0.95, 1.0), true)
+	start_button.add_theme_font_size_override("font_size", 34)
+	UIKit.style_button($VBoxContainer/ShopButton, Color(0.55, 0.8, 1.0), false)
+	UIKit.style_button($VBoxContainer/SettingsButton, Color(0.5, 0.65, 0.85), false)
+
+	# The Gauntlet (challenge mode) entry — shows waiting tickets.
+	var ch_btn := UIKit.neon_button("THE GAUNTLET   ·   %d TICKETS" % ChallengeManager.get_tickets(),
+		UIKit.COL_TICKET, Vector2(0, 64), 25, false)
 	ch_btn.name = "ChallengeButton"
-	ch_btn.text = "⚔  THE GAUNTLET  (🎟 %d)" % ChallengeManager.get_tickets()
-	ch_btn.custom_minimum_size = Vector2(0, 64)
-	ch_btn.add_theme_font_size_override("font_size", 26)
 	ch_btn.pressed.connect(func():
 		AudioManager.play_sfx("button")
 		GameManager.change_scene("res://scenes/Challenge.tscn")

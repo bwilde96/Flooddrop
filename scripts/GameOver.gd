@@ -1,5 +1,7 @@
 extends Control
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 @onready var score_label: Label = $VBoxContainer/ScoreLabel
 @onready var survival_label: Label = $VBoxContainer/SurvivalLabel
 @onready var new_hs_label: Label = $VBoxContainer/NewHighScoreLabel
@@ -34,6 +36,8 @@ func _ready() -> void:
 	# Make RETRY the obvious default action.
 	restart_button.text = "▶  RETRY"
 	restart_button.add_theme_font_size_override("font_size", 40)
+	UIKit.style_button(restart_button, Color(0.55, 0.9, 1.0), true)
+	UIKit.style_button(menu_button, Color(0.5, 0.65, 0.85), false)
 
 	score_label.text = "Score: %d" % GameManager.score
 	survival_label.text = "Survived: %.1fs" % GameManager.survival_time
@@ -94,37 +98,51 @@ func _setup_challenge_result(res: Dictionary) -> void:
 	if res.get("won", false):
 		title.text = "CHALLENGE\nCOMPLETE!"
 		title.add_theme_color_override("font_color", Color(0.4, 1.0, 0.6))
-		var bits: Array = ["+%d 💧" % res.get("droplets", 0)]
-		if res.get("cores", 0) > 0: bits.append("+%d ⬡" % res.get("cores", 0))
-		if res.get("prisms", 0) > 0: bits.append("+%d ◆" % res.get("prisms", 0))
-		droplets_earned_label.text = "  ".join(bits)
-		total_droplets_label.text = "" if res.get("first_clear", false) else "(practice — reduced rewards)"
-		restart_button.text = "▶  NEXT"
+		droplets_earned_label.text = ""
+		total_droplets_label.text = "" if res.get("first_clear", false) else "practice — reduced rewards"
+		restart_button.text = "NEXT"
+		UIKit.style_button(restart_button, Color(0.35, 1.0, 0.55), true)
 		var lbl := _make_info_label(Color(0.4, 1.0, 0.6))
 		lbl.text = "FIRST CLEAR!" if res.get("first_clear", false) else "Cleared again — nice."
 		$VBoxContainer.add_child(lbl)
 		$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
+		# Reward chips (shader icons, no emoji)
+		var chips := HBoxContainer.new()
+		chips.alignment = BoxContainer.ALIGNMENT_CENTER
+		chips.add_theme_constant_override("separation", 12)
+		if res.get("droplets", 0) > 0:
+			chips.add_child(UIKit.chip(UIKit.ICON_DROPLET, "+%d" % res.droplets, 28, 24))
+		if res.get("cores", 0) > 0:
+			chips.add_child(UIKit.chip(UIKit.ICON_CORE, "+%d" % res.cores, 28, 24))
+		if res.get("prisms", 0) > 0:
+			chips.add_child(UIKit.chip(UIKit.ICON_PRISM, "+%d" % res.prisms, 28, 24))
+		$VBoxContainer.add_child(chips)
+		$VBoxContainer.move_child(chips, droplets_earned_label.get_index())
 	else:
 		title.text = "CHALLENGE\nFAILED"
 		title.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
 		var pct := int(res.get("progress", 0.0) * 100.0)
-		droplets_earned_label.text = "+%d 💧 consolation" % GameManager.last_droplets_earned
+		droplets_earned_label.text = "+%d droplets consolation" % GameManager.last_droplets_earned
 		total_droplets_label.text = "You reached %d%% — so close!" % pct if pct >= 50 else "You reached %d%%" % pct
 		if res.get("second_wind", false):
-			restart_button.text = "▶  SECOND WIND — FREE RETRY"
+			restart_button.text = "SECOND WIND — FREE RETRY"
+			UIKit.style_button(restart_button, Color(1.0, 0.8, 0.3), true)
 			var lbl := _make_info_label(Color(1.0, 0.85, 0.3))
-			lbl.text = "⚡ Second Wind: that was close enough to try again free."
+			lbl.text = "Second Wind: that was close enough to go again, free."
 			$VBoxContainer.add_child(lbl)
 			$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
 		elif res.get("refunded", false):
-			restart_button.text = "▶  RETRY"
+			restart_button.text = "RETRY"
+			UIKit.style_button(restart_button, Color(0.55, 0.9, 1.0), true)
 			var lbl := _make_info_label(Color(0.6, 0.85, 1.0))
-			lbl.text = "🎟 Ticket refunded — that ended too fast to count."
+			lbl.text = "Ticket refunded — that ended too fast to count."
 			$VBoxContainer.add_child(lbl)
 			$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
 		else:
 			var cost := ChallengeManager.get_attempt_cost(res.get("stage", 0), def)
-			restart_button.text = "▶  RETRY (1 🎟)" if cost > 0 else "▶  RETRY — FREE"
+			restart_button.text = "RETRY  (1 TICKET)" if cost > 0 else "RETRY — FREE"
+			UIKit.style_button(restart_button, Color(0.55, 0.9, 1.0), true)
+	UIKit.style_button(menu_button, Color(0.5, 0.65, 0.85), false)
 
 	# Rewire the buttons for challenge flow.
 	restart_button.pressed.disconnect(_on_restart_pressed)
