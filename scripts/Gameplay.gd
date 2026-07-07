@@ -611,7 +611,9 @@ func _read_challenge_config() -> void:
 	is_challenge = true
 	challenge_stage = cfg.get("stage", 0)
 	challenge_def = cfg.get("def", {})
-	challenge_mods = challenge_def.get("mods", {})
+	# Deep copy: defs live in a const Dictionary (read-only). The boss script
+	# escalates by WRITING to challenge_mods, which crashed on the const.
+	challenge_mods = challenge_def.get("mods", {}).duplicate(true)
 	current_level_index = clampi(challenge_stage, 0, levels.size() - 1)
 
 func _apply_challenge_modifiers() -> void:
