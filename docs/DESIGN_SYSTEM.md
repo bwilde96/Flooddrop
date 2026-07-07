@@ -1,16 +1,35 @@
 # Flood Drop — Premium Design System
 
 The single source of truth for how everything looks. Goal: every screen reads like a
-shipped, premium neon-arcade title. Nothing uses Godot defaults.
+shipped, premium title. Nothing uses Godot defaults.
 
 ---
 
-## 1. Brand & mood
+## 1. Art direction: LIQUID GLASS
 
-**"Liquid light in a neon night."** Deep-ink darkness, luminous liquid, glass and glow.
-Every surface is dark; every accent is *emissive* (it looks lit, not painted). White is
-reserved for glare peaks — never for large areas. The bloom pass is part of the design:
-bright accents are expected to glow.
+**The game is glowing liquid — so the UI is liquid too.** Every UI element is a dark
+**glass vessel holding luminous liquid**. The hero object of gameplay (a glossy drop with
+a specular highlight, soft rim, living wobble) is the design DNA of every control:
+
+- **Buttons are glass capsules with a liquid fill.** The accent colour is literal liquid
+  with an animated waveline. Primary CTA = nearly full and glowing; secondary = a low
+  puddle. Pressing makes the liquid rise and brighten. (Every button carries the game's
+  core mechanic — a flood level.)
+- **Panels are glass vessels**: large radii (26), a **meniscus highlight** where light
+  catches the top inner edge, and the section's liquid pooled at the bottom. Gauntlet
+  stage panels pool their **biome's** liquid — stage identity is its liquid.
+- **One key light, top-left** — the same direction as the droplet shader's light, so UI
+  glass and gameplay liquid agree.
+- **Shapes are droplet-round**: capsules and pills, never hard tech corners. Chips are
+  full pills.
+- **Electric "energy border" cards are reserved for actual cards** (the Shop's
+  collectible passives). They are card treatment, not menu treatment.
+- Deep-ink darkness everywhere; accents are *emissive*; white only for glare peaks; the
+  bloom pass is part of the design.
+
+Implementation: `assets/ui/liquid_glass.gdshader` (one shader drives buttons, panels,
+chips at any size — capsule when corner = height/2) via `UIKit.style_button` /
+`UIKit.LiquidPanel`.
 
 ## 2. Colour palette
 

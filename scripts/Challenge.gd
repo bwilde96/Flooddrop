@@ -157,7 +157,8 @@ func _build_challenges() -> void:
 		if not unlocked:
 			accent = Color(0.28, 0.30, 0.36)
 
-		var card := UIKit.ElectricPanel.new(accent, 20.0, 16)
+		# The stage's own liquid pools at the bottom of its glass vessel.
+		var card := UIKit.LiquidPanel.new(accent, 0.075 if unlocked else 0.035, 26.0, 16)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		list.add_child(card)
 
@@ -274,7 +275,7 @@ func _build_powers() -> void:
 	for ability in ChallengeManager.ABILITY_TREE.keys():
 		var have: bool = ability in unlocked_abilities
 		var accent := Color(0.3, 1.0, 0.8) if have else Color(0.28, 0.30, 0.36)
-		var card := UIKit.ElectricPanel.new(accent, 20.0, 16)
+		var card := UIKit.LiquidPanel.new(accent, 0.10 if have else 0.04, 26.0, 16)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		list.add_child(card)
 		var v := VBoxContainer.new()

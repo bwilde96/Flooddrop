@@ -161,10 +161,10 @@ static func chip(icon_type: int, text: String, icon_size: float = 26.0, font_siz
 	var tint := icon_color(icon_type)
 	var panel := PanelContainer.new()
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.06, 0.08, 0.12, 0.9)
-	st.set_corner_radius_all(int(icon_size * 0.7))
+	st.bg_color = Color(0.05, 0.075, 0.125, 0.82)
+	st.set_corner_radius_all(999) # full pill — droplet-round, per the liquid language
 	st.set_border_width_all(1)
-	st.border_color = Color(tint.r, tint.g, tint.b, 0.45)
+	st.border_color = Color(tint.r, tint.g, tint.b, 0.3)
 	st.content_margin_left = 12
 	st.content_margin_right = 14
 	st.content_margin_top = 5
@@ -187,7 +187,9 @@ static func set_chip_text(chip_panel: PanelContainer, text: String) -> void:
 	var l: Label = chip_panel.find_child("Value", true, false)
 	if l: l.text = text
 
-## Neon button: dark glass with a glowing accent border; filled variant for CTAs.
+## Liquid Glass button (docs/DESIGN_SYSTEM.md): a glass capsule holding glowing
+## accent liquid with a live waveline. filled=true -> nearly full (primary CTA);
+## otherwise a low puddle. Pressing sloshes the fill.
 static func neon_button(text: String, accent: Color, min_size: Vector2, font_size: int = 22, filled: bool = false) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -196,8 +198,57 @@ static func neon_button(text: String, accent: Color, min_size: Vector2, font_siz
 	style_button(b, accent, filled)
 	return b
 
-## Apply the neon look to an existing Button (e.g. scene-defined ones).
+## Apply the Liquid Glass look to any Button (scene-defined or new).
 static func style_button(b: Button, accent: Color, filled: bool = false) -> void:
+	var pad := StyleBoxEmpty.new()
+	pad.content_margin_left = 22
+	pad.content_margin_right = 22
+	pad.content_margin_top = 10
+	pad.content_margin_bottom = 10
+	for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+		b.add_theme_stylebox_override(st, pad)
+	b.add_theme_font_override("font", font_ui_semibold(2))
+	var quiet_col := accent.lightened(0.5)
+	b.add_theme_color_override("font_color", Color.WHITE if filled else quiet_col)
+	b.add_theme_color_override("font_hover_color", Color.WHITE if filled else quiet_col.lightened(0.2))
+	b.add_theme_color_override("font_pressed_color", Color.WHITE)
+	b.add_theme_color_override("font_disabled_color", TEXT_LOW)
+
+	# The vessel: a shader rect drawn behind the button's own text.
+	if b.has_node("LiquidGlass"):
+		b.get_node("LiquidGlass").queue_free()
+	var rect := ColorRect.new()
+	rect.name = "LiquidGlass"
+	rect.show_behind_parent = true
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var m := ShaderMaterial.new()
+	m.shader = load("res://assets/ui/liquid_glass.gdshader")
+	m.set_shader_parameter("accent", accent)
+	m.set_shader_parameter("fill_level", 0.82 if filled else 0.16)
+	m.set_shader_parameter("wave_amp", 2.2 if filled else 1.6)
+	rect.material = m
+	b.add_child(rect)
+
+	var sync := func():
+		m.set_shader_parameter("rect_size", b.size)
+		m.set_shader_parameter("corner_radius", b.size.y * 0.5) # capsule
+	b.resized.connect(sync)
+	sync.call()
+
+	# Fluid feedback: the liquid rises and brightens under the thumb.
+	var base_fill := 0.82 if filled else 0.16
+	b.button_down.connect(func():
+		m.set_shader_parameter("brightness", 1.3)
+		m.set_shader_parameter("fill_level", minf(1.0, base_fill + 0.14))
+	)
+	var release := func():
+		m.set_shader_parameter("brightness", 1.0)
+		m.set_shader_parameter("fill_level", base_fill)
+	b.button_up.connect(release)
+	b.mouse_exited.connect(release)
+
+static func _legacy_style_button(b: Button, accent: Color, filled: bool = false) -> void:
 	var normal := StyleBoxFlat.new()
 	normal.set_corner_radius_all(14)
 	normal.set_border_width_all(2)
@@ -271,6 +322,35 @@ class ElectricPanel extends PanelContainer:
 			_rect.material.set_shader_parameter("line_color", accent)
 
 ## display=true -> Audiowide (screen titles, big moments); else Rajdhani Bold caps.
+## Liquid Glass panel: a glass vessel with the accent liquid pooled at the bottom.
+## Use for menu sections and stage panels (electric cards stay for actual CARDS).
+class LiquidPanel extends PanelContainer:
+	var content: MarginContainer
+	var _rect: ColorRect
+	var _mat: ShaderMaterial
+
+	func _init(accent: Color, fill: float = 0.13, corner: float = 26.0, margin: int = 16) -> void:
+		add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+		_rect = ColorRect.new()
+		_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_mat = ShaderMaterial.new()
+		_mat.shader = load("res://assets/ui/liquid_glass.gdshader")
+		_mat.set_shader_parameter("accent", accent)
+		_mat.set_shader_parameter("fill_level", fill)
+		_mat.set_shader_parameter("corner_radius", corner)
+		_mat.set_shader_parameter("wave_amp", 2.8)
+		_mat.set_shader_parameter("wave_speed", 0.6)
+		_rect.material = _mat
+		add_child(_rect)
+		content = MarginContainer.new()
+		for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+			content.add_theme_constant_override(side, margin)
+		add_child(content)
+		_rect.resized.connect(func(): _mat.set_shader_parameter("rect_size", _rect.size))
+
+	func set_accent(accent: Color) -> void:
+		_mat.set_shader_parameter("accent", accent)
+
 static func heading(text: String, font_size: int, color: Color, display: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
