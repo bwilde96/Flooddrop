@@ -1626,15 +1626,28 @@ var active_bullets: Array = []
 var time_since_last_shot: float = 0.0
 
 func _make_transparent(img: Image, thresh: float = 0.18) -> void:
-	# Chroma-key the solid background (top-left pixel) out of the turret JPEGs.
+	# Chroma-key the solid background (top-left pixel) out of the turret JPEGs, with a
+	# feathered + despilled edge so there's no white/black halo around the silhouette:
+	#  - dist <= thresh           -> fully transparent (pure background)
+	#  - thresh < dist < feather  -> partial alpha, and the bg colour is un-composited
+	#                                out of the pixel (despill), killing the fringe
+	#  - dist >= feather          -> kept as-is (subject)
 	img.convert(Image.FORMAT_RGBA8)
 	var bg = img.get_pixel(0, 0)
+	var feather := thresh + 0.20
 	for y in range(img.get_height()):
 		for x in range(img.get_width()):
 			var c = img.get_pixel(x, y)
-			if abs(c.r - bg.r) < thresh and abs(c.g - bg.g) < thresh and abs(c.b - bg.b) < thresh:
-				c.a = 0.0
-				img.set_pixel(x, y, c)
+			var dist = max(abs(c.r - bg.r), max(abs(c.g - bg.g), abs(c.b - bg.b)))
+			if dist <= thresh:
+				img.set_pixel(x, y, Color(c.r, c.g, c.b, 0.0))
+			elif dist < feather:
+				var a = (dist - thresh) / (feather - thresh)
+				var inv = 1.0 - a
+				var sr = clamp((c.r - inv * bg.r) / max(a, 0.04), 0.0, 1.0)
+				var sg = clamp((c.g - inv * bg.g) / max(a, 0.04), 0.0, 1.0)
+				var sb = clamp((c.b - inv * bg.b) / max(a, 0.04), 0.0, 1.0)
+				img.set_pixel(x, y, Color(sr, sg, sb, a))
 
 func _additive_material() -> CanvasItemMaterial:
 	var m = CanvasItemMaterial.new()
