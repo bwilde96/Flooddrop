@@ -21,6 +21,19 @@ func _ready() -> void:
 	var hs: float = SaveManager.get_value("high_score", 0.0)
 	high_score_label.text = "High Score: %d" % int(hs)
 
+	# The Gauntlet (challenge mode) entry — badge shows waiting tickets.
+	var ch_btn := Button.new()
+	ch_btn.name = "ChallengeButton"
+	ch_btn.text = "⚔  THE GAUNTLET  (🎟 %d)" % ChallengeManager.get_tickets()
+	ch_btn.custom_minimum_size = Vector2(0, 64)
+	ch_btn.add_theme_font_size_override("font_size", 26)
+	ch_btn.pressed.connect(func():
+		AudioManager.play_sfx("button")
+		GameManager.change_scene("res://scenes/Challenge.tscn")
+	)
+	$VBoxContainer.add_child(ch_btn)
+	$VBoxContainer.move_child(ch_btn, $VBoxContainer/ShopButton.get_index())
+
 func _on_start_pressed() -> void:
 	AudioManager.play_sfx("power_up")
 	start_button.disabled = true

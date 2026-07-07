@@ -26,6 +26,11 @@ func _ready() -> void:
 	restart_button.pressed.connect(_on_restart_pressed)
 	menu_button.pressed.connect(_on_menu_pressed)
 
+	# Challenge results take a different shape entirely.
+	if not GameManager.last_challenge_result.is_empty():
+		_setup_challenge_result(GameManager.last_challenge_result)
+		return
+
 	# Make RETRY the obvious default action.
 	restart_button.text = "▶  RETRY"
 	restart_button.add_theme_font_size_override("font_size", 40)
@@ -77,6 +82,78 @@ func _ready() -> void:
 			break
 	if not shown:
 		_next_unlock_label.text = "All abilities unlocked! ⚡"
+
+func _setup_challenge_result(res: Dictionary) -> void:
+	var title: Label = $VBoxContainer/TitleLabel
+	var def: Dictionary = res.get("def", {})
+	new_hs_label.visible = false
+	score_label.text = "Score: %d" % GameManager.score
+	survival_label.text = str(def.get("name", "Challenge"))
+	menu_button.text = "THE GAUNTLET"
+
+	if res.get("won", false):
+		title.text = "CHALLENGE\nCOMPLETE!"
+		title.add_theme_color_override("font_color", Color(0.4, 1.0, 0.6))
+		var bits: Array = ["+%d 💧" % res.get("droplets", 0)]
+		if res.get("cores", 0) > 0: bits.append("+%d ⬡" % res.get("cores", 0))
+		if res.get("prisms", 0) > 0: bits.append("+%d ◆" % res.get("prisms", 0))
+		droplets_earned_label.text = "  ".join(bits)
+		total_droplets_label.text = "" if res.get("first_clear", false) else "(practice — reduced rewards)"
+		restart_button.text = "▶  NEXT"
+		var lbl := _make_info_label(Color(0.4, 1.0, 0.6))
+		lbl.text = "FIRST CLEAR!" if res.get("first_clear", false) else "Cleared again — nice."
+		$VBoxContainer.add_child(lbl)
+		$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
+	else:
+		title.text = "CHALLENGE\nFAILED"
+		title.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
+		var pct := int(res.get("progress", 0.0) * 100.0)
+		droplets_earned_label.text = "+%d 💧 consolation" % GameManager.last_droplets_earned
+		total_droplets_label.text = "You reached %d%% — so close!" % pct if pct >= 50 else "You reached %d%%" % pct
+		if res.get("second_wind", false):
+			restart_button.text = "▶  SECOND WIND — FREE RETRY"
+			var lbl := _make_info_label(Color(1.0, 0.85, 0.3))
+			lbl.text = "⚡ Second Wind: that was close enough to try again free."
+			$VBoxContainer.add_child(lbl)
+			$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
+		elif res.get("refunded", false):
+			restart_button.text = "▶  RETRY"
+			var lbl := _make_info_label(Color(0.6, 0.85, 1.0))
+			lbl.text = "🎟 Ticket refunded — that ended too fast to count."
+			$VBoxContainer.add_child(lbl)
+			$VBoxContainer.move_child(lbl, survival_label.get_index() + 1)
+		else:
+			var cost := ChallengeManager.get_attempt_cost(res.get("stage", 0), def)
+			restart_button.text = "▶  RETRY (1 🎟)" if cost > 0 else "▶  RETRY — FREE"
+
+	# Rewire the buttons for challenge flow.
+	restart_button.pressed.disconnect(_on_restart_pressed)
+	restart_button.pressed.connect(func(): _retry_challenge(res))
+	menu_button.pressed.disconnect(_on_menu_pressed)
+	menu_button.pressed.connect(func():
+		AudioManager.play_sfx("button")
+		GameManager.change_scene("res://scenes/Challenge.tscn")
+	)
+
+func _retry_challenge(res: Dictionary) -> void:
+	AudioManager.play_sfx("button")
+	var stage: int = res.get("stage", 0)
+	var def: Dictionary = res.get("def", {})
+	if res.get("won", false):
+		GameManager.change_scene("res://scenes/Challenge.tscn") # "NEXT" -> pick the next one
+		return
+	var cid: String = def.get("id", "")
+	if res.get("second_wind", false):
+		ChallengeManager.use_second_wind(cid)
+		GameManager.challenge_ticket_spent = false
+	else:
+		var cost := ChallengeManager.get_attempt_cost(stage, def)
+		if cost > 0 and not ChallengeManager.spend_ticket():
+			AudioManager.play_sfx("miss")
+			GameManager.change_scene("res://scenes/Challenge.tscn")
+			return
+		GameManager.challenge_ticket_spent = cost > 0
+	GameManager.start_challenge(stage, def)
 
 func _make_info_label(color: Color) -> Label:
 	var l := Label.new()

@@ -129,6 +129,7 @@ var next_glitch_target: float = 0.5
 var meteor_generation: int = 0
 var icon_label: Label = null
 var is_targeted_by_turret: bool = false
+var is_boss_drop: bool = false
 
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 @onready var visuals: Node2D = $Visuals
@@ -183,6 +184,7 @@ func on_pool_activate(pool: Node) -> void:
 	next_glitch_target = randf_range(0.3, 0.8)
 	meteor_generation = 0
 	is_targeted_by_turret = false
+	is_boss_drop = false
 	
 	var current_color = get_current_color()
 	fluid_rect.material.set_shader_parameter("water_color", current_color)
@@ -520,6 +522,9 @@ func pop() -> void:
 
 func pop_by_bomb() -> void:
 	if state == DropState.POPPING or state == DropState.INACTIVE: return
+	if is_boss_drop:
+		pop() # bosses take one tick of damage from AoE — never an instant kill
+		return
 	state = DropState.POPPING
 	collision_shape.set_deferred("disabled", true)
 	_play_pop_animation()

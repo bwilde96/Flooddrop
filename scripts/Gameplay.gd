@@ -114,6 +114,23 @@ var tidal_wave_y: float = 1280.0
 
 var owned_passives: Array = []
 
+# --- Challenge mode state ---
+var is_challenge: bool = false
+var challenge_def: Dictionary = {}
+var challenge_stage: int = 0
+var challenge_mods: Dictionary = {}
+var challenge_speed_mult: float = 1.0
+var challenge_spawn_mult: float = 1.0
+var challenge_pops: int = 0
+var challenge_misses: int = 0
+var challenge_done: bool = false
+var frenzy_timer: float = 0.0
+var meteor_rain_timer: float = 0.0
+var boss_phase: int = -1
+var boss_timer: float = 0.0
+var boss_drop_ref: Area2D = null
+var boss_max_hp: float = 24.0
+
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
 
@@ -244,6 +261,7 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
+	_read_challenge_config() # must run before anything touches current_level_index
 	_setup_glow()
 	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
 
@@ -272,6 +290,10 @@ func _ready() -> void:
 	)
 	
 	active_ability = SaveManager.get_value("equipped_ability", "time_warp")
+	# Per-ability cooldown (tree buffs applied) instead of one-size-fits-all 30s.
+	ability_cooldown_max = ChallengeManager.get_ability_cooldown(active_ability)
+	if active_ability == "time_warp":
+		freeze_slow_multiplier *= ChallengeManager.get_buff_product("time_warp", "power_mult")
 	_setup_ability_ui()
 	
 	owned_passives = SaveManager.get_value("owned_passives", [])
@@ -549,8 +571,176 @@ func _ready() -> void:
 	event_label.modulate.a = 0.0
 	event_center.add_child(event_label)
 	
-	current_level_index = 0
-	ThemeManager.equip_theme(levels[0].theme)
+	if not is_challenge:
+		current_level_index = 0
+		ThemeManager.equip_theme(levels[0].theme)
+	else:
+		_apply_challenge_modifiers()
+
+# ------------------------------------------------------------ CHALLENGE MODE --
+func _read_challenge_config() -> void:
+	var cfg: Dictionary = GameManager.challenge_config
+	if cfg.is_empty(): return
+	is_challenge = true
+	challenge_stage = cfg.get("stage", 0)
+	challenge_def = cfg.get("def", {})
+	challenge_mods = challenge_def.get("mods", {})
+	current_level_index = clampi(challenge_stage, 0, levels.size() - 1)
+
+func _apply_challenge_modifiers() -> void:
+	event_triggered_for_level = true # no scripted level events; the challenge drives itself
+	challenge_speed_mult = challenge_mods.get("speed_mult", 1.0)
+	challenge_spawn_mult = challenge_mods.get("spawn_mult", 1.0)
+	flood_damage_per_miss *= challenge_mods.get("damage_mult", 1.0)
+
+	var forced: String = challenge_mods.get("force_event", "")
+	if forced != "" and forced != "meteor_rain":
+		active_event = forced
+		event_timer = 999999.0
+		if forced == "eruption" and eruption_particles:
+			eruption_particles.emitting = true
+	if challenge_mods.has("frenzy_every"):
+		frenzy_timer = challenge_mods.frenzy_every
+	if challenge_mods.get("force_event", "") == "meteor_rain":
+		meteor_rain_timer = 4.0
+	if challenge_def.get("is_boss", false):
+		boss_phase = 0
+		boss_timer = 2.5 # short breath before wave 1
+
+	if challenge_mods.get("sudden_death", false):
+		shield_charges = 0 # loadout rule: banked shields can't defuse sudden death
+		_update_powerup_hud()
+
+func _challenge_tick(delta: float) -> void:
+	if challenge_done: return
+
+	if challenge_mods.has("frenzy_every"):
+		frenzy_timer -= delta
+		if frenzy_timer <= 0:
+			frenzy_timer = challenge_mods.frenzy_every
+			for i in range(4):
+				spawn_drop(true)
+			shake_intensity = maxf(shake_intensity, screen_shake_strength * 0.5)
+
+	if challenge_mods.get("force_event", "") == "meteor_rain":
+		meteor_rain_timer -= delta
+		if meteor_rain_timer <= 0:
+			meteor_rain_timer = randf_range(5.0, 8.0)
+			var old_force = force_drop_type
+			force_drop_type = ForceDropType.METEOR
+			spawn_drop()
+			force_drop_type = old_force
+
+	if boss_phase >= 0:
+		_boss_tick(delta)
+
+	_check_challenge_win()
+
+func _check_challenge_win() -> void:
+	if challenge_done: return
+	var win: Dictionary = challenge_def.get("win", {})
+	var t: String = win.get("type", "")
+	var v: float = win.get("value", 0.0)
+	var met := false
+	var prog := 0.0
+	match t:
+		"survive":
+			met = GameManager.survival_time >= v
+			prog = GameManager.survival_time / maxf(1.0, v)
+		"score":
+			met = GameManager.score >= v
+			prog = GameManager.score / maxf(1.0, v)
+		"pops":
+			met = challenge_pops >= int(v)
+			prog = challenge_pops / maxf(1.0, v)
+		"combo":
+			met = current_multiplier >= int(v)
+			prog = float(current_multiplier - 1) / maxf(1.0, v - 1.0)
+		"boss":
+			met = false # won only by killing the boss drop (see _on_drop_popped)
+			prog = minf(0.6, maxf(0.0, boss_phase) * 0.15)
+			if boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
+				prog = 0.6 + 0.4 * (1.0 - float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
+	GameManager.challenge_progress = clampf(prog, 0.0, 1.0) # feeds Second Wind
+	if met:
+		_challenge_win()
+
+func _challenge_win() -> void:
+	if challenge_done: return
+	challenge_done = true
+	is_playing = false
+	AudioManager.play_sfx("rainbow")
+	AudioManager.vibrate("rainbow")
+	shake_intensity = screen_shake_strength * 2.0
+	trigger_hit_pause(0.1)
+	var t = ThemeManager.get_equipped_theme()
+	event_overlay.color = t.get("drop_color", Color.WHITE)
+	event_overlay.modulate.a = 0.6
+	_start_event("CHALLENGE COMPLETE!", 3.0, active_event, Color(0.4, 1.0, 0.6))
+	var center = Vector2(360, (get_screen_top() + get_screen_bottom()) / 2.0)
+	_spawn_particle(center, Color(0.4, 1.0, 0.6), false, true)
+	get_tree().create_timer(1.8).timeout.connect(GameManager.challenge_won)
+
+func _challenge_fail() -> void:
+	if challenge_done: return
+	challenge_done = true
+	is_playing = false
+	AudioManager.play_sfx("game_over")
+	AudioManager.vibrate("game_over")
+	GameManager.trigger_game_over()
+
+func _boss_tick(delta: float) -> void:
+	boss_timer -= delta
+	match boss_phase:
+		0:
+			if boss_timer <= 0:
+				_start_event("WAVE 1 — THE GATHERING", 3.0, active_event, Color(1.0, 0.8, 0.3))
+				for i in range(5):
+					spawn_drop(true)
+				boss_phase = 1
+				boss_timer = 12.0
+		1:
+			if boss_timer <= 0:
+				_start_event("WAVE 2 — THE SURGE", 3.0, active_event, Color(1.0, 0.5, 0.2))
+				frenzy_timer = 0.1
+				challenge_mods["frenzy_every"] = 5.0
+				boss_phase = 2
+				boss_timer = 14.0
+		2:
+			if boss_timer <= 0:
+				_start_event("WAVE 3 — THE FURY", 3.0, active_event, Color(1.0, 0.3, 0.3))
+				challenge_mods["frenzy_every"] = 3.5
+				challenge_speed_mult *= 1.15
+				boss_phase = 3
+				boss_timer = 14.0
+		3:
+			if boss_timer <= 0:
+				_spawn_boss_drop()
+				boss_phase = 4
+		4:
+			# The Warden escaped off the bottom without dying? It returns, angrier.
+			if boss_drop_ref == null or not is_instance_valid(boss_drop_ref) \
+					or boss_drop_ref.state == boss_drop_ref.DropState.INACTIVE:
+				if not challenge_done:
+					_start_event("IT RETURNS…", 2.0, active_event, Color(1.0, 0.4, 1.0))
+					_spawn_boss_drop()
+
+func _spawn_boss_drop() -> void:
+	_start_event("THE WARDEN APPEARS", 3.0, active_event, Color(0.9, 0.4, 1.0))
+	shake_intensity = screen_shake_strength * 2.5
+	var d = spawn_specific_drop(Vector2(360, get_screen_top() + 140.0), 7, 3.0) # giant METEOR shell
+	if d:
+		# Base 24 taps, softened by honest pity (-2 per 3 failed attempts, max -6).
+		var hp := ChallengeManager.get_boss_hp(challenge_def.get("id", ""), 24)
+		boss_max_hp = float(hp)
+		d.tap_health = hp
+		d.meteor_generation = 2   # boss does not split on death
+		d.is_boss_drop = true
+		d.is_targeted_by_turret = true # auto-turret can't cheese the boss
+		d.fall_speed = 32.0            # slow, inevitable descent = the timer
+		d.fall_velocity = 32.0
+		d.bounce_velocity_x = 140.0    # prowls side to side
+		boss_drop_ref = d
 
 func _setup_glow() -> void:
 	# Bloom on the bright neon/liquid highlights — the single biggest quality lift.
@@ -763,15 +953,18 @@ func _process(delta: float) -> void:
 	if is_playing and not get_tree().paused:
 		GameManager.survival_time += delta
 		
-		# Check level up
-		if current_level_index < levels.size() - 1:
+		# Check level up (main mode only — challenges lock to their stage)
+		if not is_challenge and current_level_index < levels.size() - 1:
 			if GameManager.survival_time >= levels[current_level_index + 1].time:
 				current_level_index += 1
 				_trigger_level_up()
-				
+
 		if not event_triggered_for_level and GameManager.survival_time >= levels[current_level_index].time + 15.0:
 			_trigger_event_for_current_level()
 			event_triggered_for_level = true
+
+		if is_challenge:
+			_challenge_tick(delta)
 			
 		if event_timer > 0:
 			event_timer -= delta
@@ -900,8 +1093,8 @@ func _process(delta: float) -> void:
 			
 			if ev == "overdrive":
 				theme_spawn_mult *= 0.33 # 3x faster spawns
-				
-			spawn_timer = current_spawn_interval * theme_spawn_mult
+
+			spawn_timer = current_spawn_interval * theme_spawn_mult / challenge_spawn_mult
 			
 	if debug_panel.visible:
 		update_debug_ui()
@@ -921,7 +1114,7 @@ func _use_ability() -> void:
 	AudioManager.play_sfx("power_up")
 	
 	if active_ability == "time_warp":
-		freeze_timer = max(freeze_timer, 5.0) # Using existing freeze logic
+		freeze_timer = max(freeze_timer, 5.0 + ChallengeManager.get_buff_sum("time_warp", "duration_add"))
 		freeze_overlay.visible = true
 		freeze_overlay.modulate = Color(0.3, 0.2, 1.0, 0.6) # Deep Indigo
 		freeze_particles.emitting = true
@@ -933,7 +1126,7 @@ func _use_ability() -> void:
 		tw.tween_property(event_overlay, "modulate:a", 0.0, 0.5)
 	elif active_ability == "evaporation":
 		evaporation_particles.position.y = get_screen_bottom() - current_flood * 5.0 # Emit exactly from top of flood
-		var target_flood = max(0.0, current_flood - 30.0)
+		var target_flood = max(0.0, current_flood - 30.0 * ChallengeManager.get_buff_product("evaporation", "power_mult"))
 		var tw = create_tween()
 		tw.tween_property(self, "current_flood", target_flood, 0.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
 		tw.parallel().tween_method(_update_flood_visual_smooth_raw, current_flood, target_flood, 0.5)
@@ -948,6 +1141,10 @@ func _use_ability() -> void:
 		AudioManager.play_sfx("pop")
 	elif active_ability == "tidal_wave":
 		is_tidal_wave_active = true
+		var extra_drain = ChallengeManager.get_buff_sum("tidal_wave", "wave_drain")
+		if extra_drain > 0.0:
+			current_flood = max(0.0, current_flood - extra_drain)
+			_update_flood_visual_smooth(0.0)
 		tidal_wave_y = get_screen_bottom()
 		tidal_wave_rect.visible = true
 		tidal_wave_particles.emitting = true
@@ -958,7 +1155,7 @@ func _use_ability() -> void:
 		tw.tween_property(event_overlay, "modulate:a", 0.0, 1.0)
 	elif active_ability == "midas_touch":
 		is_midas_active = true
-		midas_timer = 8.0
+		midas_timer = 8.0 + ChallengeManager.get_buff_sum("midas_touch", "duration_add")
 		midas_particles.emitting = true
 		for d in drop_container.get_children():
 			if d.has_method("pop") and d.state == d.DropState.FALLING:
@@ -966,7 +1163,7 @@ func _use_ability() -> void:
 				_spawn_particle(d.position, Color(1.0, 0.9, 0.2))
 	elif active_ability == "auto_turret":
 		is_turret_active = true
-		turret_timer = 4.0
+		turret_timer = 4.0 + ChallengeManager.get_buff_sum("auto_turret", "duration_add")
 		if turret_base:
 			turret_base.visible = true
 
@@ -988,10 +1185,17 @@ func _trigger_level_up() -> void:
 		active_event = ""
 		event_timer = 0.0
 
-	var is_first = (current_level_index == 0)
+	if not is_challenge:
+		ChallengeManager.record_stage_reached(current_level_index)
+
+	# Challenges use the reveal banner for their own name, and skip the depth bonus.
+	var is_first = (current_level_index == 0) or is_challenge
 
 	# --- Bold "new environment" reveal ---
-	level_up_label.text = "LEVEL %d\n%s" % [current_level_index + 1, t.name.to_upper()]
+	if is_challenge:
+		level_up_label.text = "CHALLENGE\n%s" % str(challenge_def.get("name", "")).to_upper()
+	else:
+		level_up_label.text = "LEVEL %d\n%s" % [current_level_index + 1, t.name.to_upper()]
 	level_up_label.add_theme_font_size_override("font_size", 60)
 	level_up_label.add_theme_color_override("font_color", t.drop_color.lightened(0.3))
 	level_up_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
@@ -1149,6 +1353,7 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 	var act_speed = current_drop_speed
 	if ev == "eruption": act_speed = min(current_drop_speed * 1.5, 950.0)
 	elif ev == "overdrive": act_speed = current_drop_speed * 0.6
+	act_speed *= challenge_speed_mult
 	
 	drop.gameplay_ref = self
 	drop.fall_speed = act_speed
@@ -1177,12 +1382,14 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 	elif ev == "toxic":
 		chosen_type = drop.DropType.NORMAL # Don't spawn powerups during Corrosive, just normal drops
 	else:
-		if GameManager.survival_time >= min_time_before_powerups:
+		if GameManager.survival_time >= min_time_before_powerups and not challenge_mods.get("no_powerups", false):
 			if _count_active_powerups() < max_active_powerups:
 				if randf() < current_power_up_chance:
 					chosen_type = _pick_random_powerup()
 					
 	drop.type = chosen_type
+	if is_challenge and chosen_type == drop.DropType.NORMAL and challenge_mods.has("tiny_drops"):
+		drop.custom_scale_mult = challenge_mods.tiny_drops
 	if drop.has_method("apply_stats"):
 		drop.apply_stats()
 	drop.queue_redraw()
@@ -1219,6 +1426,9 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.bounce_velocity_x = randf_range(300.0, 500.0) * (1.0 if randf() > 0.5 else -1.0)
 	else:
 		drop.is_pinata = false
+
+	if is_challenge and challenge_mods.has("sway") and drop.bounce_velocity_x == 0.0:
+		drop.bounce_velocity_x = challenge_mods.sway * (1.0 if randf() > 0.5 else -1.0)
 		
 	var current_time = Time.get_ticks_msec() / 1000.0
 	# Tighter, snappier formation: drops drip and fall quickly instead of hanging at the
@@ -1248,8 +1458,8 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
 
-func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_velocity_y: float = 0.0, custom_vel_x: float = 0.0) -> void:
-	if pool_manager == null: return
+func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_velocity_y: float = 0.0, custom_vel_x: float = 0.0) -> Node:
+	if pool_manager == null: return null
 	var drop = pool_manager.get_drop()
 	drop.gameplay_ref = self
 
@@ -1277,6 +1487,7 @@ func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_veloci
 
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
+	return drop
 
 func _pick_random_powerup() -> int:
 	var total_weight = weight_drain + weight_freeze + weight_bomb + weight_shield
@@ -1296,6 +1507,11 @@ func trigger_hit_pause(duration: float = 0.05) -> void:
 	)
 
 func _on_drop_popped(drop_node: Area2D) -> void:
+	if is_challenge:
+		challenge_pops += 1
+		if boss_drop_ref != null and drop_node == boss_drop_ref:
+			boss_drop_ref = null
+			_challenge_win()
 	var t = drop_node.type
 	var pos = drop_node.position
 	var base_score = int(drop_node.score_value * ThemeManager.get_equipped_theme().get("score_mult", 1.0))
@@ -1430,7 +1646,13 @@ func _on_drop_missed(flood_value: float, break_streak: bool = true) -> void:
 		
 	if break_streak:
 		_reset_streak()
-		
+
+	if is_challenge and not challenge_done and flood_value > 5.0:
+		challenge_misses += 1
+		var win: Dictionary = challenge_def.get("win", {})
+		if challenge_mods.get("sudden_death", false) or (win.has("max_misses") and challenge_misses > int(win.max_misses)):
+			flood_value = max_flood # instant fail through the normal game-over path below
+
 	current_flood += flood_value
 	shake_intensity = screen_shake_strength
 	trigger_hit_pause(0.05)

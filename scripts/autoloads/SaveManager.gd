@@ -119,6 +119,28 @@ func validate_save(data: Dictionary) -> bool:
 			clean_owned_passives.append(p)
 	data["owned_passives"] = clean_owned_passives
 		
+	# --- Challenge mode / economy (v2 fields; added via validation so v1 saves migrate) ---
+	if not data.has("prisms") or typeof(data["prisms"]) != TYPE_FLOAT:
+		data["prisms"] = 0.0
+	if not data.has("cores") or typeof(data["cores"]) != TYPE_FLOAT:
+		data["cores"] = 0.0
+	if not data.has("tickets") or typeof(data["tickets"]) != TYPE_FLOAT:
+		data["tickets"] = 3.0
+	if not data.has("tickets_last_grant") or typeof(data["tickets_last_grant"]) != TYPE_STRING:
+		data["tickets_last_grant"] = ""
+	if not data.has("challenge_completed") or typeof(data["challenge_completed"]) != TYPE_DICTIONARY:
+		data["challenge_completed"] = {}
+	if not data.has("challenge_attempted") or typeof(data["challenge_attempted"]) != TYPE_DICTIONARY:
+		data["challenge_attempted"] = {}
+	if not data.has("boss_fails") or typeof(data["boss_fails"]) != TYPE_DICTIONARY:
+		data["boss_fails"] = {}
+	if not data.has("ticket_in_flight") or typeof(data["ticket_in_flight"]) != TYPE_BOOL:
+		data["ticket_in_flight"] = false
+	if not data.has("ability_tree") or typeof(data["ability_tree"]) != TYPE_DICTIONARY:
+		data["ability_tree"] = {}
+	if not data.has("max_stage_reached") or typeof(data["max_stage_reached"]) != TYPE_FLOAT:
+		data["max_stage_reached"] = 0.0
+
 	if not data.has("settings") or typeof(data["settings"]) != TYPE_DICTIONARY:
 		data["settings"] = {
 			"sfx_volume": 1.0,
@@ -151,6 +173,13 @@ func reset_to_default() -> void:
 		"equipped_ability": "time_warp",
 		"unlocked_passives": ["score_boost", "magnetic_tap"],
 		"owned_passives": [],
+		"prisms": 0.0,
+		"cores": 0.0,
+		"tickets": 3.0,
+		"tickets_last_grant": "",
+		"challenge_completed": {},
+		"ability_tree": {},
+		"max_stage_reached": 0.0,
 		"settings": {
 			"sfx_volume": 1.0,
 			"bgm_volume": 0.8,
