@@ -561,6 +561,8 @@ func pop() -> void:
 			gameplay_ref._spawn_particle(position, get_current_color())
 		AudioManager.play_sfx("pop")
 		AudioManager.vibrate("pop")
+		if is_boss_drop and gameplay_ref and gameplay_ref.has_method("_on_boss_titan_hit"):
+			gameplay_ref._on_boss_titan_hit(self)
 		if tap_health > 0:
 			return
 			

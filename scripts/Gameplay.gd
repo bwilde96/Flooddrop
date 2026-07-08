@@ -2,6 +2,8 @@ extends Node
 
 const UIKit = preload("res://scripts/ui/UIKit.gd")
 const StormSerpent = preload("res://scripts/bosses/StormSerpent.gd")
+const MonsoonCore = preload("res://scripts/bosses/MonsoonCore.gd")
+const HydraVat = preload("res://scripts/bosses/HydraVat.gd")
 
 enum ForceDropType {
 	NONE = -1,
@@ -133,7 +135,9 @@ var boss_phase: int = -1
 var boss_timer: float = 0.0
 var boss_drop_ref: Area2D = null
 var boss_max_hp: float = 24.0
-var serpent_ref: Node2D = null
+var boss_ctrl_ref: Node2D = null # serpent / core / hydra controller (null for titan)
+var _titan_p2: bool = false
+var _titan_p3: bool = false
 
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
@@ -642,6 +646,27 @@ func _apply_challenge_modifiers() -> void:
 		shield_charges = 0 # loadout rule: banked shields can't defuse sudden death
 		_update_powerup_hud()
 
+	# After the name reveal, tell the player exactly what to do.
+	get_tree().create_timer(2.4).timeout.connect(func():
+		if not challenge_done and is_playing:
+			_start_event(_objective_text(), 2.6, active_event, Color(0.92, 0.97, 1.0))
+	)
+
+func _objective_text() -> String:
+	var win: Dictionary = challenge_def.get("win", {})
+	var extra := ""
+	if win.has("max_misses"):
+		extra = "  ·  %d MISSES MAX" % int(win.max_misses)
+	elif challenge_mods.get("sudden_death", false):
+		extra = "  ·  DON'T MISS"
+	match str(win.get("type", "")):
+		"survive": return "SURVIVE %ds%s" % [int(win.get("value", 0)), extra]
+		"score":   return "REACH %d POINTS%s" % [int(win.get("value", 0)), extra]
+		"pops":    return "POP %d DROPS%s" % [int(win.get("value", 0)), extra]
+		"combo":   return "REACH A %dx COMBO%s" % [int(win.get("value", 0)), extra]
+		"boss":    return "SURVIVE THE WAVES — THEN KILL IT"
+	return ""
+
 func _challenge_tick(delta: float) -> void:
 	if challenge_done: return
 
@@ -690,8 +715,8 @@ func _check_challenge_win() -> void:
 		"boss":
 			met = false # won only by killing the boss (drop pop / serpent signal)
 			prog = minf(0.6, maxf(0.0, boss_phase) * 0.15)
-			if boss_phase == 4 and serpent_ref != null and is_instance_valid(serpent_ref):
-				prog = 0.6 + 0.4 * serpent_ref.get_progress()
+			if boss_phase == 4 and boss_ctrl_ref != null and is_instance_valid(boss_ctrl_ref):
+				prog = 0.6 + 0.4 * boss_ctrl_ref.get_progress()
 			elif boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
 				prog = 0.6 + 0.4 * (1.0 - float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
 	GameManager.challenge_progress = clampf(prog, 0.0, 1.0) # feeds Second Wind
@@ -751,8 +776,8 @@ func _boss_tick(delta: float) -> void:
 				_spawn_boss()
 				boss_phase = 4
 		4:
-			if serpent_ref != null:
-				pass # the Serpent runs its own show
+			if boss_ctrl_ref != null:
+				pass # controller bosses run their own show
 			# The Warden escaped off the bottom without dying? It returns, angrier.
 			elif boss_drop_ref == null or not is_instance_valid(boss_drop_ref) \
 					or boss_drop_ref.state == boss_drop_ref.DropState.INACTIVE:
@@ -761,23 +786,45 @@ func _boss_tick(delta: float) -> void:
 					_spawn_boss_drop()
 
 func _spawn_boss() -> void:
-	# Boss archetype per challenge def: "titan" (giant drop) or "serpent".
-	if str(challenge_def.get("boss_type", "titan")) == "serpent":
-		_spawn_serpent_boss()
-	else:
-		_spawn_boss_drop()
+	# Boss archetype per challenge def: titan (giant drop) / serpent / core / hydra.
+	match str(challenge_def.get("boss_type", "titan")):
+		"serpent": _spawn_ctrl_boss(StormSerpent, "THE SERPENT RISES")
+		"core":    _spawn_ctrl_boss(MonsoonCore, "THE CORE IGNITES")
+		"hydra":   _spawn_ctrl_boss(HydraVat, "THE HYDRA WAKES")
+		_:         _spawn_boss_drop()
 
-func _spawn_serpent_boss() -> void:
-	_start_event("THE SERPENT RISES", 3.0, active_event, Color(0.6, 1.0, 0.6))
+func _spawn_ctrl_boss(boss_script: GDScript, banner: String) -> void:
+	_start_event(banner, 3.0, active_event, Color(1.0, 0.85, 0.4))
 	shake_intensity = screen_shake_strength * 2.5
-	var s := StormSerpent.new()
+	var s: Node2D = boss_script.new()
 	var t = ThemeManager.get_equipped_theme()
 	s.accent = t.get("drop_color", Color(0.4, 1.0, 0.5))
 	s.gameplay = self
+	if "volley_type" in s and challenge_mods.has("core_volley"):
+		s.volley_type = int(challenge_mods.core_volley)
 	add_child(s)
 	s.defeated.connect(_challenge_win)
-	s.flood_damage.connect(func(amt): _on_drop_missed(amt, false))
-	serpent_ref = s
+	if s.has_signal("flood_damage"):
+		s.flood_damage.connect(func(amt): _on_drop_missed(amt, false))
+	boss_ctrl_ref = s
+
+## Titan phase escalation — called by the boss drop on every hit taken.
+func _on_boss_titan_hit(drop: Area2D) -> void:
+	var frac := float(drop.tap_health) / maxf(1.0, boss_max_hp)
+	if frac <= 0.33 and not _titan_p3:
+		_titan_p3 = true
+		_start_event("IT RAGES!", 2.5, active_event, Color(1.0, 0.35, 0.3))
+		challenge_speed_mult *= 1.12
+		shake_intensity = screen_shake_strength * 2.0
+		trigger_hit_pause(0.06)
+		for i in range(4):
+			spawn_drop(true)
+	elif frac <= 0.66 and not _titan_p2:
+		_titan_p2 = true
+		_start_event("IT CRACKS!", 2.5, active_event, Color(1.0, 0.7, 0.3))
+		shake_intensity = screen_shake_strength * 1.5
+		for i in range(3):
+			spawn_drop(true)
 
 func _spawn_boss_drop() -> void:
 	_start_event("THE WARDEN APPEARS", 3.0, active_event, Color(0.9, 0.4, 1.0))
