@@ -482,7 +482,10 @@ func _update_shader_liquid_type() -> void:
 	elif type == DropType.DRAIN:
 		s_type = 11
 	elif type == DropType.METEOR:
-		s_type = 2 # Slime thick
+		if not is_boss_drop:
+			s_type = 2 # Slime thick (boss titans keep their stage's own liquid)
+	elif type == DropType.SHIELDED and shield_hp > 0:
+		s_type = 9 # Frozen solid: glacial ice shell until it's cracked
 	elif type == DropType.ACID or type == DropType.NEUTRALIZER:
 		s_type = 3 # Acid thin
 	elif type == DropType.RAINBOW:
@@ -518,12 +521,13 @@ func pop() -> void:
 		return # ghosts can't be touched (collision is off; this is a safety net)
 
 	if type == DropType.SHIELDED and shield_hp > 0:
-		# First tap: the forcefield SHATTERS.
+		# First tap: the ICE SHELL cracks apart, thawing back to liquid.
 		shield_hp = 0
 		fall_velocity = minf(fall_velocity, fall_speed) * 0.5 # staggered, briefly easier
 		release_boost = 1.0
+		_update_shader_liquid_type() # glacial shell -> parent liquid again
 		if gameplay_ref and gameplay_ref.has_method("_spawn_shield_shards"):
-			gameplay_ref._spawn_shield_shards(global_position, Color(0.45, 0.85, 1.0))
+			gameplay_ref._spawn_shield_shards(global_position, Color(0.72, 0.9, 1.0))
 		AudioManager.play_sfx("pop", 1.6)
 		AudioManager.vibrate("pop")
 		queue_redraw()
@@ -619,6 +623,13 @@ func _play_pop_animation() -> void:
 	)
 
 func get_current_color() -> Color:
+	if is_boss_drop:
+		# Boss titans wear their stage's liquid, shimmering with menace.
+		var bt = Time.get_ticks_msec() / 350.0
+		var base: Color = theme_cache.get("drop_color", Color(0.35, 0.78, 0.98)) if theme_cache else Color(0.35, 0.78, 0.98)
+		return base.lerp(Color.WHITE, 0.18 + 0.14 * sin(bt))
+	if type == DropType.SHIELDED and shield_hp > 0:
+		return Color(0.72, 0.9, 1.0, 1.0) # frozen: pale glacial blue
 	match type:
 		DropType.NORMAL: 
 			var t = ThemeManager.get_equipped_theme()
@@ -676,7 +687,7 @@ func _draw() -> void:
 		DropType.BOMB: base_col = Color(1.0, 0.4, 0.1, 1.0)
 		DropType.SHIELD: base_col = Color(0.9, 0.4, 1.0, 1.0)
 		DropType.ACID: base_col = Color(0.8, 1.0, 0.1, 1.0)
-		DropType.METEOR: base_col = Color(0.1, 0.8, 0.1, 1.0)
+		DropType.METEOR: base_col = get_current_color().lightened(0.15) if is_boss_drop else Color(0.1, 0.8, 0.1, 1.0)
 		DropType.NEUTRALIZER: base_col = Color(0.3, 1.0, 0.9, 1.0)
 		DropType.SHIELDED:
 			if shield_hp <= 0: return # shield shattered -> plain liquid drop again
@@ -742,20 +753,33 @@ func _draw() -> void:
 				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w * current_scale)
 				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w * current_scale)
 		DropType.METEOR:
-			base_col = Color(0.2, 0.9, 0.2, 1.0)
-			# Draw a rock-like texture/lines
-			draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0 * current_scale)
+			if is_boss_drop:
+				# Boss titan: imposing pulsing double ring in the stage's colour
+				var bt = Time.get_ticks_msec() / 1000.0
+				var bc = get_current_color()
+				var bp = 0.5 + 0.5 * sin(bt * 4.0)
+				draw_arc(Vector2.ZERO, size * 0.95, 0, TAU, 32, Color(bc.r, bc.g, bc.b, 0.5 + 0.3 * bp), 4.0 * current_scale)
+				draw_arc(Vector2.ZERO, size * 1.25, bt * 1.2, bt * 1.2 + 4.4, 24, Color(1, 1, 1, 0.35), 2.5 * current_scale)
+			else:
+				base_col = Color(0.2, 0.9, 0.2, 1.0)
+				# Draw a rock-like texture/lines
+				draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0 * current_scale)
 		DropType.SHIELDED:
-			# Rotating hexagonal forcefield with a travelling shimmer
+			# Hexagonal ICE shell — slow crystal rotation, frost sparkle
 			var sh_t = Time.get_ticks_msec() / 1000.0
 			var sh_r = size * 1.6
 			var sh_pts := PackedVector2Array()
 			for i in range(7):
-				var a = sh_t * 1.3 + TAU * float(i) / 6.0
+				var a = sh_t * 0.6 + TAU * float(i) / 6.0
 				sh_pts.append(Vector2(cos(a), sin(a)) * sh_r)
-			draw_polyline(sh_pts, Color(0.5, 0.9, 1.0, 0.28), 9.0 * current_scale)
-			draw_polyline(sh_pts, Color(0.62, 0.93, 1.0, 0.95), 3.2 * current_scale)
-			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.4), 2.0 * current_scale)
+			draw_polyline(sh_pts, Color(0.75, 0.92, 1.0, 0.30), 9.0 * current_scale)
+			draw_polyline(sh_pts, Color(0.85, 0.96, 1.0, 0.95), 3.2 * current_scale)
+			# Frost spokes to the crystal corners
+			for i in range(6):
+				var fa = sh_t * 0.6 + TAU * float(i) / 6.0
+				var fd = Vector2(cos(fa), sin(fa))
+				draw_line(fd * sh_r * 0.55, fd * sh_r * 0.92, Color(0.85, 0.96, 1.0, 0.35), 2.0 * current_scale)
+			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.45), 2.0 * current_scale)
 		DropType.CLOCKWORK:
 			# The rhythm ring: shrinks onto the drop; gold-white = tap NOW
 			var cw_rs = _clock_ring_scale()

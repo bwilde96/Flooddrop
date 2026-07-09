@@ -197,7 +197,7 @@ const CHALLENGES := {
 		{"id": "w1", "name": "First Rain", "desc": "Survive 45s. No power-ups — just you and the rain.",
 			"mods": {"no_powerups": true}, "win": {"type": "survive", "value": 45.0},
 			"rewards": {"droplets": 150, "cores": 1}},
-		{"id": "w2", "name": "Cloudburst", "desc": "Armoured rain: crack the shield, then pop the drop. Reach 800.",
+		{"id": "w2", "name": "Hailstorm", "desc": "Frozen rain — crack the ice shell, then pop the drop. Reach 800.",
 			"mods": {"no_powerups": true, "special_rain": "shielded", "frenzy_every": 7.0},
 			"win": {"type": "score", "value": 800.0}, "rewards": {"droplets": 250, "cores": 1}},
 		{"id": "w3", "name": "Still Waters", "desc": "Sudden death: ONE miss ends it. Pop 40 drops.",
@@ -236,7 +236,7 @@ const CHALLENGES := {
 			"rewards": {"droplets": 1000, "cores": 3, "prisms": 15}},
 	],
 	3: [ # ACID — corrosion & restraint
-		{"id": "a1", "name": "Armoured Spores", "desc": "Shielded acid rain — crack shells while the toxins rise. Survive 45s.",
+		{"id": "a1", "name": "Cryo Spores", "desc": "Frozen acid spores — crack the ice while the toxins rise. Survive 45s.",
 			"mods": {"force_event": "toxic", "special_rain": "shielded"}, "win": {"type": "survive", "value": 45.0},
 			"rewards": {"droplets": 300, "cores": 1}},
 		{"id": "a2", "name": "Neutralise", "desc": "The flood rises on its own. Pop 45 drops before it wins.",
@@ -292,7 +292,7 @@ const CHALLENGES := {
 			"rewards": {"droplets": 1800, "cores": 3, "prisms": 20}},
 	],
 	7: [ # GALAXY — chaos incarnate
-		{"id": "x1", "name": "Event Horizon", "desc": "Shielded meteors, heavy damage — everything takes two taps. Survive 45s.",
+		{"id": "x1", "name": "Event Horizon", "desc": "Ice-locked comets, heavy damage — everything takes two taps. Survive 45s.",
 			"mods": {"damage_mult": 1.5, "special_rain": "shielded"}, "win": {"type": "survive", "value": 45.0},
 			"rewards": {"droplets": 600, "cores": 1}},
 		{"id": "x2", "name": "Meteor Shower", "desc": "Endless splitting meteors + wind. Pop 70.",

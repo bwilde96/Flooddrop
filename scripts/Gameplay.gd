@@ -835,6 +835,9 @@ func _spawn_boss_drop() -> void:
 		var hp := ChallengeManager.get_boss_hp(challenge_def.get("id", ""), 24)
 		boss_max_hp = float(hp)
 		d.tap_health = hp
+		d.is_boss_drop = true
+		d._update_shader_liquid_type() # wear the stage's own liquid, not meteor slime
+		d.queue_redraw()
 		d.meteor_generation = 2   # boss does not split on death
 		d.is_boss_drop = true
 		d.is_targeted_by_turret = true # auto-turret can't cheese the boss
