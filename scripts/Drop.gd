@@ -468,28 +468,33 @@ func _input_event(_viewport: Viewport, event: InputEvent, _shape_idx: int) -> vo
 			pop()
 
 func _update_shader_liquid_type() -> void:
-	var s_type = theme_cache.get("shader_type", 0) if theme_cache else 0
-	var is_midas_level = (s_type == 6)
-	
+	var theme_type = theme_cache.get("shader_type", 0) if theme_cache else 0
+	var is_midas_level = (theme_type == 6)
+	var s_type = theme_type
+	var tint := 0.0
+
 	if type == DropType.GOLD:
 		s_type = 6
-	elif type == DropType.BOMB:
-		s_type = 8
-	elif type == DropType.FREEZE:
-		s_type = 9
-	elif type == DropType.SHIELD:
-		s_type = 10
-	elif type == DropType.DRAIN:
-		s_type = 11
+	elif type == DropType.BOMB or type == DropType.FREEZE \
+			or type == DropType.SHIELD or type == DropType.DRAIN:
+		# Full parent look: the power-up IS the stage's liquid (slime jiggles,
+		# water refracts, lava cracks) — identified by a strong colour tint
+		# (water_color already carries the power-up colour) + its drawn symbol.
+		tint = 0.65
 	elif type == DropType.METEOR:
 		if not is_boss_drop:
 			s_type = 2 # Slime thick (boss titans keep their stage's own liquid)
 	elif type == DropType.SHIELDED and shield_hp > 0:
 		s_type = 9 # Frozen solid: glacial ice shell until it's cracked
 	elif type == DropType.ACID or type == DropType.NEUTRALIZER:
-		s_type = 3 # Acid thin
+		s_type = 3 # Hazard readability: never camouflaged as the parent liquid
 	elif type == DropType.RAINBOW:
-		s_type = 4 # Pearlescent
+		s_type = 4 # Emissive pearl: it's the light source in blackout events
+
+	# Theme silhouette: slime jiggle for everything except the rigid ice shell.
+	var slime_shape: bool = (theme_type == 2) and not (type == DropType.SHIELDED and shield_hp > 0)
+	fluid_rect.material.set_shader_parameter("is_slime_shape", slime_shape)
+	fluid_rect.material.set_shader_parameter("identity_tint", tint)
 		
 	if s_type == 6 or is_midas_level:
 		fluid_rect.hide()
@@ -664,21 +669,30 @@ func _draw() -> void:
 	# Do not draw the symbol until the drop detaches from the ceiling!
 	if state == DropState.FORMING: return
 	
-	var current_scale = visuals.scale.x
-	var size = drop_radius * 0.45 * current_scale
-	
-	var y_val = fluid_rect.material.get_shader_parameter("drop_y")
-	var visual_offset_y = 0.0
-	if y_val != null:
-		visual_offset_y = float(y_val) + visuals.position.y
-		
+	# Anchor the symbol to the ACTUAL rendered body centre and inherit the body's
+	# scale, so glyphs stay glued and squash/jiggle with the liquid (the old code
+	# ignored visuals.scale.y, so wobbling slime bodies drifted off their symbols).
+	var vscale: Vector2 = visuals.scale
+	var size = drop_radius * 0.45 # scale now lives in the transform below
+
+	var body_y_local := 50.0
+	if coin_rect and coin_rect.visible:
+		body_y_local = 0.0 # the coin body is centred at Visuals-local (0,0)
+	else:
+		var y_val = fluid_rect.material.get_shader_parameter("drop_y")
+		if y_val != null:
+			body_y_local = float(y_val)
+
 	var spin_scale_x = 1.0
 	if coin_rect and coin_rect.visible:
 		var spin_speed = coin_rect.material.get_shader_parameter("spin_speed")
 		var spin_time = Time.get_ticks_msec() / 1000.0 * spin_speed
 		spin_scale_x = max(abs(cos(spin_time)), 0.05)
-		
-	draw_set_transform(Vector2(0, visual_offset_y), 0.0, Vector2(spin_scale_x, 1.0))
+
+	draw_set_transform(
+		Vector2(0.0, visuals.position.y + vscale.y * body_y_local),
+		0.0,
+		Vector2(spin_scale_x * vscale.x, vscale.y))
 	
 	var base_col = Color(1.0, 1.0, 1.0, 1.0)
 	match type:
@@ -709,20 +723,20 @@ func _draw() -> void:
 			base_col = Color(0.2, 1.0, 0.2, 1.0)
 			for w in [8.0, 4.0]:
 				var c = Color(0.1, 0.8, 0.1, 0.4) if w == 8.0 else base_col
-				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w)
+				draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), c, w)
+				draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), c, w)
 		DropType.FREEZE:
 			base_col = Color(0.5, 0.9, 1.0, 1.0)
 			for w in [7.0, 3.0]:
 				var c = Color(0.2, 0.6, 1.0, 0.4) if w == 7.0 else base_col
-				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), c, w * current_scale)
-				draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), c, w * current_scale)
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w)
+				draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), c, w)
+				draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), c, w)
 		DropType.BOMB:
 			base_col = Color(1.0, 0.4, 0.1, 1.0)
 			draw_circle(Vector2.ZERO, size * 0.5, base_col)
-			draw_line(Vector2(0, -size*0.5), Vector2(size*0.8, -size*1.2), Color(0.1, 0.1, 0.1, 1.0), 4.0 * current_scale)
+			draw_line(Vector2(0, -size*0.5), Vector2(size*0.8, -size*1.2), Color(0.1, 0.1, 0.1, 1.0), 4.0)
 			draw_circle(Vector2(size*0.8, -size*1.2), size*0.3, Color(1.0, 0.8, 0.2, 1.0)) # Spark
 		DropType.SHIELD:
 			base_col = Color(0.9, 0.4, 1.0, 1.0)
@@ -731,39 +745,32 @@ func _draw() -> void:
 				Vector2(size, size*0.2), Vector2(0, size*0.9), Vector2(-size, size*0.2)
 			])
 			draw_polygon(points, [base_col, base_col, base_col, base_col, base_col])
-		DropType.RAINBOW:
-			var time_sec = Time.get_ticks_msec() / 1000.0
-			base_col = Color.from_hsv(fmod(time_sec, 1.0), 1.0, 1.0)
-			for w in [8.0, 4.0]:
-				var alpha = 0.3 if w == 8.0 else 1.0
-				draw_arc(Vector2(0, size*0.3), size, 0, PI*2, 24, Color.from_hsv(fmod(time_sec, 1.0), 1.0, 1.0, alpha), w * current_scale)
-				draw_arc(Vector2(0, size*0.3), size*0.7, 0, PI*2, 24, Color.from_hsv(fmod(time_sec + 0.33, 1.0), 1.0, 1.0, alpha), w * current_scale)
-				draw_arc(Vector2(0, size*0.3), size*0.4, 0, PI*2, 24, Color.from_hsv(fmod(time_sec + 0.66, 1.0), 1.0, 1.0, alpha), w * current_scale)
+		# (RAINBOW glyphs removed: _draw returns early for RAINBOW — dead branch)
 		DropType.ACID:
 			base_col = Color(0.8, 1.0, 0.1, 1.0)
 			# Draw a skull or toxic symbol. For simplicity, an X
 			for w in [6.0, 3.0]:
 				var c = Color(0.5, 0.8, 0.0, 0.4) if w == 6.0 else base_col
-				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w * current_scale)
-				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w * current_scale)
+				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w)
+				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w)
 		DropType.NEUTRALIZER:
 			base_col = Color(0.3, 1.0, 0.9, 1.0)
 			for w in [7.0, 3.0]:
 				var c = Color(0.0, 0.7, 0.6, 0.45) if w == 7.0 else base_col
-				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w * current_scale)
-				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w * current_scale)
+				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w)
+				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w)
 		DropType.METEOR:
 			if is_boss_drop:
 				# Boss titan: imposing pulsing double ring in the stage's colour
 				var bt = Time.get_ticks_msec() / 1000.0
 				var bc = get_current_color()
 				var bp = 0.5 + 0.5 * sin(bt * 4.0)
-				draw_arc(Vector2.ZERO, size * 0.95, 0, TAU, 32, Color(bc.r, bc.g, bc.b, 0.5 + 0.3 * bp), 4.0 * current_scale)
-				draw_arc(Vector2.ZERO, size * 1.25, bt * 1.2, bt * 1.2 + 4.4, 24, Color(1, 1, 1, 0.35), 2.5 * current_scale)
+				draw_arc(Vector2.ZERO, size * 0.95, 0, TAU, 32, Color(bc.r, bc.g, bc.b, 0.5 + 0.3 * bp), 4.0)
+				draw_arc(Vector2.ZERO, size * 1.25, bt * 1.2, bt * 1.2 + 4.4, 24, Color(1, 1, 1, 0.35), 2.5)
 			else:
 				base_col = Color(0.2, 0.9, 0.2, 1.0)
 				# Draw a rock-like texture/lines
-				draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0 * current_scale)
+				draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0)
 		DropType.SHIELDED:
 			# Hexagonal ICE shell — slow crystal rotation, frost sparkle
 			var sh_t = Time.get_ticks_msec() / 1000.0
@@ -772,14 +779,14 @@ func _draw() -> void:
 			for i in range(7):
 				var a = sh_t * 0.6 + TAU * float(i) / 6.0
 				sh_pts.append(Vector2(cos(a), sin(a)) * sh_r)
-			draw_polyline(sh_pts, Color(0.75, 0.92, 1.0, 0.30), 9.0 * current_scale)
-			draw_polyline(sh_pts, Color(0.85, 0.96, 1.0, 0.95), 3.2 * current_scale)
+			draw_polyline(sh_pts, Color(0.75, 0.92, 1.0, 0.30), 9.0)
+			draw_polyline(sh_pts, Color(0.85, 0.96, 1.0, 0.95), 3.2)
 			# Frost spokes to the crystal corners
 			for i in range(6):
 				var fa = sh_t * 0.6 + TAU * float(i) / 6.0
 				var fd = Vector2(cos(fa), sin(fa))
-				draw_line(fd * sh_r * 0.55, fd * sh_r * 0.92, Color(0.85, 0.96, 1.0, 0.35), 2.0 * current_scale)
-			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.45), 2.0 * current_scale)
+				draw_line(fd * sh_r * 0.55, fd * sh_r * 0.92, Color(0.85, 0.96, 1.0, 0.35), 2.0)
+			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.45), 2.0)
 		DropType.CLOCKWORK:
 			# The rhythm ring: shrinks onto the drop; gold-white = tap NOW
 			var cw_rs = _clock_ring_scale()
@@ -788,17 +795,17 @@ func _draw() -> void:
 			var cw_c = Color(1.0, 0.85, 0.3, 0.95) if in_win else Color(1.0, 0.55, 0.15, 0.65)
 			if clock_flash > 0.0:
 				cw_c = cw_c.lerp(Color(1.0, 0.2, 0.15, 1.0), clock_flash)
-			draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, cw_c, (5.0 if in_win else 3.0) * current_scale)
+			draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, cw_c, (5.0 if in_win else 3.0))
 			if in_win:
-				draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, Color(1, 1, 1, 0.55), 1.8 * current_scale)
+				draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, Color(1, 1, 1, 0.55), 1.8)
 			# Target notches at the sweet radius
 			for i in range(4):
 				var na = TAU * float(i) / 4.0 + PI / 4.0
 				var nd = Vector2(cos(na), sin(na))
-				draw_line(nd * size * 1.85, nd * size * 2.12, Color(1.0, 0.85, 0.4, 0.75), 2.4 * current_scale)
+				draw_line(nd * size * 1.85, nd * size * 2.12, Color(1.0, 0.85, 0.4, 0.75), 2.4)
 		DropType.PHANTOM:
 			# Spectral orbit dashes — the tell that it phases
 			var ph_t = Time.get_ticks_msec() / 1000.0
 			for i in range(8):
 				var pa = ph_t * 1.5 + TAU * float(i) / 8.0
-				draw_arc(Vector2.ZERO, size * 1.5, pa, pa + 0.34, 6, Color(0.75, 0.6, 1.0, 0.65), 2.4 * current_scale)
+				draw_arc(Vector2.ZERO, size * 1.5, pa, pa + 0.34, 6, Color(0.75, 0.6, 1.0, 0.65), 2.4)
