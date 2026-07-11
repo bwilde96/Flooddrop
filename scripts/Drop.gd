@@ -768,9 +768,23 @@ func _draw() -> void:
 				draw_arc(Vector2.ZERO, size * 0.95, 0, TAU, 32, Color(bc.r, bc.g, bc.b, 0.5 + 0.3 * bp), 4.0)
 				draw_arc(Vector2.ZERO, size * 1.25, bt * 1.2, bt * 1.2 + 4.4, 24, Color(1, 1, 1, 0.35), 2.5)
 			else:
-				base_col = Color(0.2, 0.9, 0.2, 1.0)
-				# Draw a rock-like texture/lines
-				draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0)
+				# Damage cracks spread across the giant as it takes hits.
+				# (Replaces a 12-segment arc that read as a weird floating
+				# polygon ring above the sagging slime body.)
+				var start_hp := 5 if meteor_generation == 0 else (2 if meteor_generation == 1 else 1)
+				var hits: int = clampi(start_hp - tap_health, 0, 6)
+				var seed_base: int = int(get_instance_id() % 97)
+				for i in range(hits):
+					var ca := float(seed_base + i * 37) * 0.61
+					var dirv := Vector2(cos(ca), sin(ca))
+					var side := 1.0 if i % 2 == 0 else -1.0
+					var pts := PackedVector2Array([
+						dirv * size * 0.12,
+						dirv * size * 0.55 + dirv.orthogonal() * size * 0.20 * side,
+						dirv * size * 0.95,
+					])
+					draw_polyline(pts, Color(0.04, 0.3, 0.04, 0.9), 3.5)
+					draw_polyline(pts, Color(0.8, 1.0, 0.6, 0.5), 1.5)
 		DropType.SHIELDED:
 			# Hexagonal ICE shell — slow crystal rotation, frost sparkle
 			var sh_t = Time.get_ticks_msec() / 1000.0
