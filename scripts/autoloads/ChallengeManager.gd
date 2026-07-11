@@ -210,8 +210,8 @@ const CHALLENGES := {
 		{"id": "w3", "name": "Still Waters", "desc": "Sudden death: ONE miss ends it. Pop 40 drops.",
 			"mods": {"sudden_death": true}, "win": {"type": "pops", "value": 40.0},
 			"rewards": {"droplets": 400, "cores": 1}},
-		{"id": "wboss", "name": "⚔ The Deluge", "desc": "BOSS: survive the three-wave storm and burst its heart.",
-			"mods": {"spawn_mult": 1.15}, "win": {"type": "boss", "value": 0.0}, "is_boss": true,
+		{"id": "wboss", "name": "⚔ The Rainfather", "desc": "BOSS: the storm itself. Burst its swelling rainheart before it falls — six times.",
+			"mods": {}, "win": {"type": "boss", "value": 0.0}, "is_boss": true, "boss_type": "rainfather",
 			"rewards": {"droplets": 800, "cores": 3, "prisms": 15}},
 	],
 	1: [ # SLIME — chaos & bounce

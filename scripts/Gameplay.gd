@@ -4,6 +4,7 @@ const UIKit = preload("res://scripts/ui/UIKit.gd")
 const StormSerpent = preload("res://scripts/bosses/StormSerpent.gd")
 const MonsoonCore = preload("res://scripts/bosses/MonsoonCore.gd")
 const HydraVat = preload("res://scripts/bosses/HydraVat.gd")
+const Rainfather = preload("res://scripts/bosses/Rainfather.gd")
 const BossBar = preload("res://scripts/ui/BossBar.gd")
 
 enum ForceDropType {
@@ -869,10 +870,11 @@ func _spawn_boss() -> void:
 	_boss_intro()
 	# Boss archetype per challenge def: titan (giant drop) / serpent / core / hydra.
 	match str(challenge_def.get("boss_type", "titan")):
-		"serpent": _spawn_ctrl_boss(StormSerpent, "THE SERPENT RISES")
-		"core":    _spawn_ctrl_boss(MonsoonCore, "THE CORE IGNITES")
-		"hydra":   _spawn_ctrl_boss(HydraVat, "THE HYDRA WAKES")
-		_:         _spawn_boss_drop()
+		"serpent":    _spawn_ctrl_boss(StormSerpent, "THE SERPENT RISES")
+		"core":       _spawn_ctrl_boss(MonsoonCore, "THE CORE IGNITES")
+		"hydra":      _spawn_ctrl_boss(HydraVat, "THE HYDRA WAKES")
+		"rainfather": _spawn_ctrl_boss(Rainfather, "THE SKY DARKENS")
+		_:            _spawn_boss_drop()
 	_spawn_boss_bar()
 
 func _boss_intro() -> void:
