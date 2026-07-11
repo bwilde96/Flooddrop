@@ -171,6 +171,13 @@ func is_challenge_unlocked(stage: int, index: int) -> bool:
 	if index >= defs.size(): return false
 	return is_completed(stage, defs[index - 1].id)
 
+func get_stage_cleared_count(stage: int) -> int:
+	var n := 0
+	for c in get_stage_challenges(stage):
+		if is_completed(stage, c.id):
+			n += 1
+	return n
+
 func stage_fully_cleared(stage: int) -> bool:
 	for c in get_stage_challenges(stage):
 		if not is_completed(stage, c.id):

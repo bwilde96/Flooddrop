@@ -20,6 +20,20 @@ func _ready() -> void:
 		title.add_theme_font_size_override("font_size", 30)
 		title.add_theme_color_override("font_color", UIKit.CYAN.lightened(0.25))
 	back_button.text = "‹  BACK"
+
+	# Each setting sits in its own liquid vessel.
+	var vbox_s: VBoxContainer = $VBox/Margin/VBox
+	for row_name in ["SFXHBox", "BGMHBox", "HapticsHBox"]:
+		var row := vbox_s.get_node_or_null(row_name)
+		if row == null: continue
+		var idx := row.get_index()
+		vbox_s.remove_child(row)
+		var lp := UIKit.LiquidPanel.new(Color(0.35, 0.75, 1.0), 0.07, 22.0, 16)
+		lp.content.add_child(row)
+		vbox_s.add_child(lp)
+		vbox_s.move_child(lp, idx)
+	vbox_s.add_theme_constant_override("separation", 14)
+	UIKit.animate_in(vbox_s.get_children(), 0.06)
 	
 	sfx_slider.value = AudioManager.sfx_volume * 100.0
 	bgm_slider.value = AudioManager.bgm_volume * 100.0

@@ -363,6 +363,21 @@ static func heading(text: String, font_size: int, color: Color, display: bool = 
 	l.add_theme_constant_override("shadow_outline_size", 8)
 	return l
 
+## Staggered entrance: fade + gentle scale pop (container-safe — no position tweens).
+static func animate_in(nodes: Array, stagger: float = 0.05) -> void:
+	for i in range(nodes.size()):
+		var n = nodes[i]
+		if not (n is Control): continue
+		n.modulate.a = 0.0
+		var tw: Tween = n.create_tween()
+		tw.tween_interval(0.04 + i * stagger)
+		tw.tween_callback(func():
+			n.pivot_offset = n.size / 2.0
+			n.scale = Vector2(0.94, 0.94)
+		)
+		tw.tween_property(n, "modulate:a", 1.0, 0.18)
+		tw.parallel().tween_property(n, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
 ## Small filled tag pill, e.g. "BOSS".
 static func tag(text: String, accent: Color) -> PanelContainer:
 	var panel := PanelContainer.new()

@@ -10,6 +10,8 @@ var survival_time: float = 0.0
 var is_new_high_score: bool = false
 
 var ui_theme: Theme
+var _fade_rect: ColorRect
+var _changing: bool = false
 
 func _ready() -> void:
 	# Global design system: every Control in every scene inherits the premium
@@ -19,14 +21,37 @@ func _ready() -> void:
 	ui_theme = ThemeFactory.build()
 	get_window().theme = ui_theme
 
+	# Dip-to-black overlay for menu navigation (gameplay keeps its plunge wipe).
+	var layer := CanvasLayer.new()
+	layer.layer = 100
+	add_child(layer)
+	_fade_rect = ColorRect.new()
+	_fade_rect.color = Color(0.01, 0.02, 0.04)
+	_fade_rect.modulate.a = 0.0
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_fade_rect)
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+
 func change_scene(scene_path: String) -> void:
 	if root_scene == null:
 		push_error("GameManager.root_scene is not set!")
 		return
-		
+	# Menu navigation dips to black; gameplay entries keep the plunge wipe.
+	if scene_path == "res://scenes/Gameplay.tscn" or _fade_rect == null or _changing:
+		_do_change_scene(scene_path)
+		return
+	_changing = true
+	var tw := create_tween()
+	tw.tween_property(_fade_rect, "modulate:a", 1.0, 0.15)
+	tw.tween_callback(func(): _do_change_scene(scene_path))
+	tw.tween_interval(0.04)
+	tw.tween_property(_fade_rect, "modulate:a", 0.0, 0.22)
+	tw.tween_callback(func(): _changing = false)
+
+func _do_change_scene(scene_path: String) -> void:
 	if current_scene != null:
 		current_scene.queue_free()
-		
+
 	var new_scene_resource := load(scene_path)
 	if new_scene_resource:
 		current_scene = new_scene_resource.instantiate()

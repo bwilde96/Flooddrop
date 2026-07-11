@@ -136,6 +136,7 @@ func _refresh() -> void:
 		_build_challenges()
 	else:
 		_build_powers()
+	UIKit.animate_in(list.get_children(), 0.05)
 
 func _reward_chips(r: Dictionary) -> HBoxContainer:
 	var h := HBoxContainer.new()
@@ -157,8 +158,14 @@ func _build_challenges() -> void:
 		if not unlocked:
 			accent = Color(0.28, 0.30, 0.36)
 
-		# The stage's own liquid pools at the bottom of its glass vessel.
-		var card := UIKit.LiquidPanel.new(accent, 0.075 if unlocked else 0.035, 26.0, 16)
+		# The stage's own liquid pools at the bottom of its glass vessel —
+		# and RISES as you clear its challenges (progress you can see).
+		var defs_all: Array = ChallengeManager.get_stage_challenges(stage)
+		var cleared: int = ChallengeManager.get_stage_cleared_count(stage)
+		var fill := 0.035
+		if unlocked:
+			fill = 0.06 + 0.30 * (float(cleared) / maxf(1.0, float(defs_all.size())))
+		var card := UIKit.LiquidPanel.new(accent, fill, 26.0, 16)
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		list.add_child(card)
 
@@ -178,6 +185,14 @@ func _build_challenges() -> void:
 		sub.add_theme_font_size_override("font_size", 16)
 		sub.add_theme_color_override("font_color", Color(0.55, 0.6, 0.68))
 		head_row.add_child(sub)
+		if unlocked:
+			var prog := Label.new()
+			prog.text = "%d/%d" % [cleared, defs_all.size()]
+			prog.add_theme_font_override("font", UIKit.font_ui_bold(1))
+			prog.add_theme_font_size_override("font_size", 18)
+			prog.add_theme_color_override("font_color",
+				UIKit.TEAL if cleared == defs_all.size() else accent.lightened(0.3))
+			head_row.add_child(prog)
 
 		if not unlocked:
 			var lock := Label.new()

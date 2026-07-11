@@ -49,6 +49,38 @@ func _ready() -> void:
 	$VBoxContainer.add_child(ch_btn)
 	$VBoxContainer.move_child(ch_btn, $VBoxContainer/ShopButton.get_index())
 
+	# Waiting tickets glow with quiet invitation.
+	if ChallengeManager.get_tickets() > 0:
+		var pulse := ch_btn.create_tween().set_loops()
+		pulse.tween_property(ch_btn, "modulate", Color(1.14, 1.12, 1.05), 0.9).set_trans(Tween.TRANS_SINE)
+		pulse.tween_property(ch_btn, "modulate", Color.WHITE, 0.9).set_trans(Tween.TRANS_SINE)
+
+	# Staggered entrance for the whole stack.
+	UIKit.animate_in($VBoxContainer.get_children(), 0.06)
+
+	# Signature moment: a droplet periodically beads off the logo and falls.
+	var drip_timer := Timer.new()
+	drip_timer.one_shot = false
+	drip_timer.wait_time = 3.4
+	drip_timer.timeout.connect(_spawn_logo_drip.bind(drip_timer))
+	add_child(drip_timer)
+	drip_timer.start()
+
+func _spawn_logo_drip(timer: Timer) -> void:
+	timer.wait_time = randf_range(2.8, 5.2)
+	var title: Label = $VBoxContainer/TitleLabel
+	var dr := UIKit.icon(UIKit.ICON_DROPLET, 26, Color(0.55, 0.85, 1.0, 0.95))
+	add_child(dr)
+	var start := title.global_position + Vector2(title.size.x * randf_range(0.25, 0.75), title.size.y - 8.0)
+	dr.global_position = start
+	dr.pivot_offset = Vector2(13, 13)
+	dr.scale = Vector2(0.2, 0.2)
+	var tw := create_tween()
+	tw.tween_property(dr, "scale", Vector2(1, 1), 0.7).set_ease(Tween.EASE_OUT) # beads up
+	tw.tween_property(dr, "global_position:y", start.y + 130.0, 0.55).set_ease(Tween.EASE_IN) # lets go
+	tw.parallel().tween_property(dr, "modulate:a", 0.0, 0.55).set_delay(0.25)
+	tw.tween_callback(dr.queue_free)
+
 func _on_start_pressed() -> void:
 	AudioManager.play_sfx("power_up")
 	start_button.disabled = true
