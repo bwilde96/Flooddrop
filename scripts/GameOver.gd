@@ -123,6 +123,16 @@ func _setup_challenge_result(res: Dictionary) -> void:
 			chips.add_child(UIKit.chip(UIKit.ICON_PRISM, "+%d" % res.prisms, 28, 24))
 		$VBoxContainer.add_child(chips)
 		$VBoxContainer.move_child(chips, droplets_earned_label.get_index())
+		# Rewards pop in one by one — small ceremony for the payout.
+		for i in range(chips.get_child_count()):
+			var ch: Control = chips.get_child(i)
+			ch.modulate.a = 0.0
+			ch.scale = Vector2(0.4, 0.4)
+			var tw := create_tween()
+			tw.tween_interval(0.3 + i * 0.18)
+			tw.tween_callback(func(): ch.pivot_offset = ch.size / 2.0)
+			tw.tween_property(ch, "modulate:a", 1.0, 0.18)
+			tw.parallel().tween_property(ch, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	else:
 		title.text = "CHALLENGE\nFAILED"
 		title.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))

@@ -4,6 +4,7 @@ const UIKit = preload("res://scripts/ui/UIKit.gd")
 const StormSerpent = preload("res://scripts/bosses/StormSerpent.gd")
 const MonsoonCore = preload("res://scripts/bosses/MonsoonCore.gd")
 const HydraVat = preload("res://scripts/bosses/HydraVat.gd")
+const BossBar = preload("res://scripts/ui/BossBar.gd")
 
 enum ForceDropType {
 	NONE = -1,
@@ -138,6 +139,10 @@ var boss_max_hp: float = 24.0
 var boss_ctrl_ref: Node2D = null # serpent / core / hydra controller (null for titan)
 var _titan_p2: bool = false
 var _titan_p3: bool = false
+var boss_bar: Control = null
+var objective_label: Label = null
+var challenge_vignette: TextureRect = null
+var _vignette_col: Color = Color(1, 0.2, 0.15)
 
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
@@ -652,6 +657,49 @@ func _apply_challenge_modifiers() -> void:
 			_start_event(_objective_text(), 2.6, active_event, Color(0.92, 0.97, 1.0))
 	)
 
+	# Live objective chip (bosses get the HP bar instead).
+	if not challenge_def.get("is_boss", false):
+		var pill := PanelContainer.new()
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.04, 0.06, 0.1, 0.82)
+		st.set_corner_radius_all(999)
+		st.set_border_width_all(1)
+		st.border_color = Color(0.55, 0.9, 1.0, 0.35)
+		st.content_margin_left = 16
+		st.content_margin_right = 16
+		st.content_margin_top = 5
+		st.content_margin_bottom = 5
+		pill.add_theme_stylebox_override("panel", st)
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pill.position = Vector2(24, 246)
+		objective_label = Label.new()
+		objective_label.add_theme_font_override("font", UIKit.font_ui_semibold(2))
+		objective_label.add_theme_font_size_override("font_size", 19)
+		objective_label.add_theme_color_override("font_color", UIKit.TEXT_MID)
+		objective_label.text = _objective_text()
+		pill.add_child(objective_label)
+		game_ui.add_child(pill)
+
+	# Ambience vignette: sudden-death breathes red; phantom hunts shimmer violet.
+	if challenge_mods.get("sudden_death", false) or str(challenge_mods.get("special_rain", "")) == "phantom":
+		_vignette_col = Color(1.0, 0.2, 0.15) if challenge_mods.get("sudden_death", false) else Color(0.6, 0.4, 1.0)
+		var grad := Gradient.new()
+		grad.set_color(0, Color(_vignette_col.r, _vignette_col.g, _vignette_col.b, 0.0))
+		grad.set_color(1, Color(_vignette_col.r, _vignette_col.g, _vignette_col.b, 0.55))
+		var gtex := GradientTexture2D.new()
+		gtex.gradient = grad
+		gtex.fill = GradientTexture2D.FILL_RADIAL
+		gtex.fill_from = Vector2(0.5, 0.5)
+		gtex.fill_to = Vector2(0.5, 0.0)
+		challenge_vignette = TextureRect.new()
+		challenge_vignette.texture = gtex
+		challenge_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		challenge_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+		challenge_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		challenge_vignette.modulate.a = 0.0
+		game_ui.add_child(challenge_vignette)
+		game_ui.move_child(challenge_vignette, 0)
+
 func _objective_text() -> String:
 	var win: Dictionary = challenge_def.get("win", {})
 	var extra := ""
@@ -690,6 +738,16 @@ func _challenge_tick(delta: float) -> void:
 	if boss_phase >= 0:
 		_boss_tick(delta)
 
+	# Boss bar tracks the fight; ambience vignette breathes.
+	if boss_bar != null and is_instance_valid(boss_bar):
+		if boss_ctrl_ref != null and is_instance_valid(boss_ctrl_ref):
+			boss_bar.set_frac(1.0 - boss_ctrl_ref.get_progress())
+		elif boss_drop_ref != null and is_instance_valid(boss_drop_ref):
+			boss_bar.set_frac(float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
+	if challenge_vignette != null:
+		var breathe := 2.6 if challenge_mods.get("sudden_death", false) else 1.6
+		challenge_vignette.modulate.a = 0.55 + 0.35 * sin(Time.get_ticks_msec() / 1000.0 * breathe)
+
 	_check_challenge_win()
 
 func _check_challenge_win() -> void:
@@ -720,6 +778,21 @@ func _check_challenge_win() -> void:
 			elif boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
 				prog = 0.6 + 0.4 * (1.0 - float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
 	GameManager.challenge_progress = clampf(prog, 0.0, 1.0) # feeds Second Wind
+
+	# Live objective readout, pulsing when the goal is close.
+	if objective_label != null and is_instance_valid(objective_label):
+		match t:
+			"survive": objective_label.text = "%d / %ds" % [int(GameManager.survival_time), int(v)]
+			"score":   objective_label.text = "%d / %d PTS" % [GameManager.score, int(v)]
+			"pops":    objective_label.text = "%d / %d POPS" % [challenge_pops, int(v)]
+			"combo":   objective_label.text = "%dx / %dx COMBO" % [current_multiplier, int(v)]
+		if prog >= 0.8:
+			var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 130.0)
+			objective_label.add_theme_color_override("font_color", UIKit.TEXT_MID.lerp(UIKit.TEAL, pulse))
+		var win_dict: Dictionary = challenge_def.get("win", {})
+		if win_dict.has("max_misses"):
+			objective_label.text += "   ·   %d/%d MISSES" % [challenge_misses, int(win_dict.max_misses)]
+
 	if met:
 		_challenge_win()
 
@@ -730,7 +803,14 @@ func _challenge_win() -> void:
 	AudioManager.play_sfx("rainbow")
 	AudioManager.vibrate("rainbow")
 	shake_intensity = screen_shake_strength * 2.0
-	trigger_hit_pause(0.1)
+	if boss_bar != null and is_instance_valid(boss_bar):
+		boss_bar.set_frac(0.0)
+		boss_bar.shatter()
+	# Victory beat: white flash + brief slow-mo before the celebration lands.
+	Engine.time_scale = 0.3
+	get_tree().create_timer(0.5, true, false, true).timeout.connect(func():
+		Engine.time_scale = 1.0
+	)
 	var t = ThemeManager.get_equipped_theme()
 	event_overlay.color = t.get("drop_color", Color.WHITE)
 	event_overlay.modulate.a = 0.6
@@ -786,12 +866,43 @@ func _boss_tick(delta: float) -> void:
 					_spawn_boss_drop()
 
 func _spawn_boss() -> void:
+	_boss_intro()
 	# Boss archetype per challenge def: titan (giant drop) / serpent / core / hydra.
 	match str(challenge_def.get("boss_type", "titan")):
 		"serpent": _spawn_ctrl_boss(StormSerpent, "THE SERPENT RISES")
 		"core":    _spawn_ctrl_boss(MonsoonCore, "THE CORE IGNITES")
 		"hydra":   _spawn_ctrl_boss(HydraVat, "THE HYDRA WAKES")
 		_:         _spawn_boss_drop()
+	_spawn_boss_bar()
+
+func _boss_intro() -> void:
+	# Cinematic beat: brief slow-mo + letterbox bars while the banner lands.
+	Engine.time_scale = 0.35
+	get_tree().create_timer(0.9, true, false, true).timeout.connect(func():
+		Engine.time_scale = 1.0
+	)
+	for top in [true, false]:
+		var bar := ColorRect.new()
+		bar.color = Color(0, 0, 0, 0.85)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.size = Vector2(720, 92)
+		bar.position = Vector2(0, -92.0 if top else 1280.0)
+		game_ui.add_child(bar)
+		var target_y := 0.0 if top else 1188.0
+		var away_y := -92.0 if top else 1280.0
+		var tw := create_tween()
+		tw.tween_property(bar, "position:y", target_y, 0.28).set_ease(Tween.EASE_OUT)
+		tw.tween_interval(1.3)
+		tw.tween_property(bar, "position:y", away_y, 0.3).set_ease(Tween.EASE_IN)
+		tw.tween_callback(bar.queue_free)
+
+func _spawn_boss_bar() -> void:
+	boss_bar = BossBar.new()
+	game_ui.add_child(boss_bar)
+	var t = ThemeManager.get_equipped_theme()
+	boss_bar.setup(str(challenge_def.get("name", "BOSS")).replace("⚔ ", ""), t.get("drop_color", Color.WHITE))
+	if objective_label: # boss bar replaces the objective chip
+		objective_label.get_parent().visible = false
 
 func _spawn_ctrl_boss(boss_script: GDScript, banner: String) -> void:
 	_start_event(banner, 3.0, active_event, Color(1.0, 0.85, 0.4))
