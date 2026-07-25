@@ -48,11 +48,13 @@ func _do_plunge_transition(from_color: Color, to_color: Color, theme_id: String)
 	wipe_rect.material.set_shader_parameter("reveal_progress", 0.0)
 	
 	bg_tween = create_tween()
-	
+
 	# Phase 1: The Descent (Accelerate to smooth speed and darkness)
-	bg_tween.tween_method(func(v): wipe_rect.material.set_shader_parameter("speed", v), 0.0, 5.0, 3.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
-	bg_tween.parallel().tween_method(func(v): wipe_rect.material.set_shader_parameter("darkness", v), 0.0, 1.0, 3.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
-	bg_tween.parallel().tween_method(func(c): wipe_rect.material.set_shader_parameter("line_color", c), from_color, to_color, 3.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+	# NOTE: tightened from 3.5s/2.5s (~6s total) — that long a wipe darkened the
+	# screen for seconds during live play and read like a broken loading animation.
+	bg_tween.tween_method(func(v): wipe_rect.material.set_shader_parameter("speed", v), 0.0, 5.0, 1.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+	bg_tween.parallel().tween_method(func(v): wipe_rect.material.set_shader_parameter("darkness", v), 0.0, 1.0, 1.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+	bg_tween.parallel().tween_method(func(c): wipe_rect.material.set_shader_parameter("line_color", c), from_color, to_color, 1.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
 	
 	# Phase 2: The Swap (At pitch black)
 	bg_tween.tween_callback(func():
@@ -76,8 +78,8 @@ func _do_plunge_transition(from_color: Color, to_color: Color, theme_id: String)
 	)
 	
 	# Phase 3: The Arrival (Decelerate gracefully and reveal from center)
-	bg_tween.tween_method(func(v): wipe_rect.material.set_shader_parameter("speed", v), 5.0, 0.0, 2.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
-	bg_tween.parallel().tween_method(func(v): wipe_rect.material.set_shader_parameter("reveal_progress", v), 0.0, 1.0, 2.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+	bg_tween.tween_method(func(v): wipe_rect.material.set_shader_parameter("speed", v), 5.0, 0.0, 1.1).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
+	bg_tween.parallel().tween_method(func(v): wipe_rect.material.set_shader_parameter("reveal_progress", v), 0.0, 1.0, 1.1).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
 	
 	bg_tween.tween_callback(func():
 		transition_complete.emit()

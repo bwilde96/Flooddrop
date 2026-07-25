@@ -1,5 +1,12 @@
 extends Node
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+const StormSerpent = preload("res://scripts/bosses/StormSerpent.gd")
+const MonsoonCore = preload("res://scripts/bosses/MonsoonCore.gd")
+const HydraVat = preload("res://scripts/bosses/HydraVat.gd")
+const Rainfather = preload("res://scripts/bosses/Rainfather.gd")
+const BossBar = preload("res://scripts/ui/BossBar.gd")
+
 enum ForceDropType {
 	NONE = -1,
 	NORMAL = 0,
@@ -113,6 +120,30 @@ var is_tidal_wave_active: bool = false
 var tidal_wave_y: float = 1280.0
 
 var owned_passives: Array = []
+
+# --- Challenge mode state ---
+var is_challenge: bool = false
+var challenge_def: Dictionary = {}
+var challenge_stage: int = 0
+var challenge_mods: Dictionary = {}
+var challenge_speed_mult: float = 1.0
+var challenge_spawn_mult: float = 1.0
+var challenge_pops: int = 0
+var challenge_misses: int = 0
+var challenge_done: bool = false
+var frenzy_timer: float = 0.0
+var meteor_rain_timer: float = 0.0
+var boss_phase: int = -1
+var boss_timer: float = 0.0
+var boss_drop_ref: Area2D = null
+var boss_max_hp: float = 24.0
+var boss_ctrl_ref: Node2D = null # serpent / core / hydra controller (null for titan)
+var _titan_p2: bool = false
+var _titan_p3: bool = false
+var boss_bar: Control = null
+var objective_label: Label = null
+var challenge_vignette: TextureRect = null
+var _vignette_col: Color = Color(1, 0.2, 0.15)
 
 func get_screen_top() -> float:
 	return (get_viewport().get_canvas_transform().affine_inverse() * Vector2.ZERO).y
@@ -244,8 +275,11 @@ func _ready() -> void:
 	current_drop_speed = base_drop_speed
 	GameManager.score = 0
 	GameManager.survival_time = 0.0
+	_style_hud()
+	_read_challenge_config() # must run before anything touches current_level_index
+	_setup_glow()
 	BackgroundManager.update_background(levels[current_level_index].theme, levels[current_level_index].theme)
-	
+
 	freeze_timer = 0.0
 	shield_charges = 0
 	current_power_up_chance = power_up_spawn_chance_start
@@ -271,6 +305,10 @@ func _ready() -> void:
 	)
 	
 	active_ability = SaveManager.get_value("equipped_ability", "time_warp")
+	# Per-ability cooldown (tree buffs applied) instead of one-size-fits-all 30s.
+	ability_cooldown_max = ChallengeManager.get_ability_cooldown(active_ability)
+	if active_ability == "time_warp":
+		freeze_slow_multiplier *= ChallengeManager.get_buff_product("time_warp", "power_mult")
 	_setup_ability_ui()
 	
 	owned_passives = SaveManager.get_value("owned_passives", [])
@@ -381,6 +419,7 @@ func _ready() -> void:
 	
 	multiplier_label = Label.new()
 	multiplier_label.text = "1x"
+	multiplier_label.add_theme_font_override("font", UIKit.font_ui_bold(1))
 	multiplier_label.add_theme_font_size_override("font_size", 40)
 	multiplier_label.add_theme_color_override("font_color", multiplier_color_map[1])
 	multiplier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -389,9 +428,8 @@ func _ready() -> void:
 	multiplier_label.offset_bottom = -10
 	multiplier_container.add_child(multiplier_label)
 	
-	if OS.has_feature("editor"):
-		debug_panel.visible = true
-	
+	debug_panel.visible = OS.has_feature("editor")
+
 
 	
 	evaporation_particles = CPUParticles2D.new()
@@ -413,16 +451,24 @@ func _ready() -> void:
 	add_child(evaporation_particles)
 	
 	tidal_wave_rect = ColorRect.new()
-	tidal_wave_rect.color = Color(0.2, 0.6, 1.0, 0.7)
+	tidal_wave_rect.color = Color(1.0, 1.0, 1.0, 1.0) # The shader provides the colour
 	tidal_wave_rect.size = Vector2(720, 1500) # Ensure it covers the whole screen bottom
 	tidal_wave_rect.position = Vector2(0, get_screen_bottom())
 	tidal_wave_rect.visible = false
 	tidal_wave_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# The beautiful animated ocean-wave shader (was sitting unused in assets/).
+	var wave_shader = load("res://assets/crashing_wave.gdshader")
+	if wave_shader:
+		var wave_mat = ShaderMaterial.new()
+		wave_mat.shader = wave_shader
+		tidal_wave_rect.material = wave_mat
 	add_child(tidal_wave_rect)
 	
 	tidal_wave_particles = CPUParticles2D.new()
 	tidal_wave_particles.emitting = false
-	tidal_wave_particles.amount = 300
+	# Subtle foam spray only — the wave shader carries the look now. (Was 300 bright
+	# particles that the bloom turned into blocky white squares.)
+	tidal_wave_particles.amount = 70
 	tidal_wave_particles.lifetime = 0.5
 	tidal_wave_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
 	tidal_wave_particles.emission_rect_extents = Vector2(360, 10)
@@ -431,9 +477,9 @@ func _ready() -> void:
 	tidal_wave_particles.spread = 45.0
 	tidal_wave_particles.initial_velocity_min = 200.0
 	tidal_wave_particles.initial_velocity_max = 500.0
-	tidal_wave_particles.scale_amount_min = 0.2
-	tidal_wave_particles.scale_amount_max = 0.5
-	tidal_wave_particles.color = Color(0.8, 0.9, 1.0, 0.8)
+	tidal_wave_particles.scale_amount_min = 0.12
+	tidal_wave_particles.scale_amount_max = 0.32
+	tidal_wave_particles.color = Color(0.85, 0.93, 1.0, 0.35)
 	tidal_wave_rect.add_child(tidal_wave_particles)
 	
 	midas_overlay = ColorRect.new()
@@ -489,6 +535,8 @@ func _ready() -> void:
 	tidal_wave_particles.texture = soft_tex
 	midas_particles.texture = soft_tex
 	freeze_particles.texture = soft_tex
+	_soft_tex = soft_tex
+	_ripple_tex = _create_ring_texture(48, 6, Color(1, 1, 1, 1), true)
 	event_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	game_ui.move_child(event_overlay, 0)
 	
@@ -527,6 +575,7 @@ func _ready() -> void:
 	
 	event_label = Label.new()
 	event_label.text = ""
+	event_label.add_theme_font_override("font", UIKit.font_display(2))
 	event_label.add_theme_font_size_override("font_size", 54)
 	event_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	event_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
@@ -539,8 +588,402 @@ func _ready() -> void:
 	event_label.modulate.a = 0.0
 	event_center.add_child(event_label)
 	
-	current_level_index = 0
-	ThemeManager.equip_theme(levels[0].theme)
+	if not is_challenge:
+		current_level_index = 0
+		ThemeManager.equip_theme(levels[0].theme)
+	else:
+		_apply_challenge_modifiers()
+
+# ------------------------------------------------------------ CHALLENGE MODE --
+func _style_hud() -> void:
+	# HUD typography per docs/DESIGN_SYSTEM.md — numbers are heroes, moments are Audiowide.
+	# Gameplay's root is a Node, so stamp the design-system theme on each HUD Control.
+	if GameManager.ui_theme:
+		game_ui.theme = GameManager.ui_theme
+		pause_menu.theme = GameManager.ui_theme
+		debug_panel.theme = GameManager.ui_theme
+	score_label.add_theme_font_override("font", UIKit.font_ui_bold(1))
+	score_label.add_theme_font_size_override("font_size", 42)
+	score_label.add_theme_color_override("font_color", UIKit.TEXT_HI)
+	high_score_label.add_theme_font_override("font", UIKit.font_ui_semibold(1))
+	high_score_label.add_theme_font_size_override("font_size", 26)
+	high_score_label.add_theme_color_override("font_color", UIKit.TEXT_HI)
+	# Over-gameplay text always gets an outline (design system rule).
+	for l: Label in [score_label, high_score_label]:
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
+		l.add_theme_constant_override("outline_size", 7)
+	danger_label.add_theme_font_override("font", UIKit.font_display(3))
+	danger_label.add_theme_color_override("font_color", UIKit.CORAL)
+	level_up_label.add_theme_font_override("font", UIKit.font_display(2))
+	score_label.text = "SCORE  0"
+
+func _read_challenge_config() -> void:
+	var cfg: Dictionary = GameManager.challenge_config
+	if cfg.is_empty(): return
+	is_challenge = true
+	challenge_stage = cfg.get("stage", 0)
+	challenge_def = cfg.get("def", {})
+	# Deep copy: defs live in a const Dictionary (read-only). The boss script
+	# escalates by WRITING to challenge_mods, which crashed on the const.
+	challenge_mods = challenge_def.get("mods", {}).duplicate(true)
+	current_level_index = clampi(challenge_stage, 0, levels.size() - 1)
+
+func _apply_challenge_modifiers() -> void:
+	event_triggered_for_level = true # no scripted level events; the challenge drives itself
+	challenge_speed_mult = challenge_mods.get("speed_mult", 1.0)
+	challenge_spawn_mult = challenge_mods.get("spawn_mult", 1.0)
+	flood_damage_per_miss *= challenge_mods.get("damage_mult", 1.0)
+
+	var forced: String = challenge_mods.get("force_event", "")
+	if forced != "" and forced != "meteor_rain":
+		active_event = forced
+		event_timer = 999999.0
+		if forced == "eruption" and eruption_particles:
+			eruption_particles.emitting = true
+	if challenge_mods.has("frenzy_every"):
+		frenzy_timer = challenge_mods.frenzy_every
+	if challenge_mods.get("force_event", "") == "meteor_rain":
+		meteor_rain_timer = 4.0
+	if challenge_def.get("is_boss", false):
+		boss_phase = 0
+		boss_timer = 2.5 # short breath before wave 1
+
+	if challenge_mods.get("sudden_death", false):
+		shield_charges = 0 # loadout rule: banked shields can't defuse sudden death
+		_update_powerup_hud()
+
+	# After the name reveal, tell the player exactly what to do.
+	get_tree().create_timer(2.4).timeout.connect(func():
+		if not challenge_done and is_playing:
+			_start_event(_objective_text(), 2.6, active_event, Color(0.92, 0.97, 1.0))
+	)
+
+	# Live objective chip (bosses get the HP bar instead).
+	if not challenge_def.get("is_boss", false):
+		var pill := PanelContainer.new()
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.04, 0.06, 0.1, 0.82)
+		st.set_corner_radius_all(999)
+		st.set_border_width_all(1)
+		st.border_color = Color(0.55, 0.9, 1.0, 0.35)
+		st.content_margin_left = 16
+		st.content_margin_right = 16
+		st.content_margin_top = 5
+		st.content_margin_bottom = 5
+		pill.add_theme_stylebox_override("panel", st)
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pill.position = Vector2(24, 246)
+		objective_label = Label.new()
+		objective_label.add_theme_font_override("font", UIKit.font_ui_semibold(2))
+		objective_label.add_theme_font_size_override("font_size", 19)
+		objective_label.add_theme_color_override("font_color", UIKit.TEXT_MID)
+		objective_label.text = _objective_text()
+		pill.add_child(objective_label)
+		game_ui.add_child(pill)
+
+	# Ambience vignette: sudden-death breathes red; phantom hunts shimmer violet.
+	if challenge_mods.get("sudden_death", false) or str(challenge_mods.get("special_rain", "")) == "phantom":
+		_vignette_col = Color(1.0, 0.2, 0.15) if challenge_mods.get("sudden_death", false) else Color(0.6, 0.4, 1.0)
+		var grad := Gradient.new()
+		grad.set_color(0, Color(_vignette_col.r, _vignette_col.g, _vignette_col.b, 0.0))
+		grad.set_color(1, Color(_vignette_col.r, _vignette_col.g, _vignette_col.b, 0.55))
+		var gtex := GradientTexture2D.new()
+		gtex.gradient = grad
+		gtex.fill = GradientTexture2D.FILL_RADIAL
+		gtex.fill_from = Vector2(0.5, 0.5)
+		gtex.fill_to = Vector2(0.5, 0.0)
+		challenge_vignette = TextureRect.new()
+		challenge_vignette.texture = gtex
+		challenge_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		challenge_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+		challenge_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		challenge_vignette.modulate.a = 0.0
+		game_ui.add_child(challenge_vignette)
+		game_ui.move_child(challenge_vignette, 0)
+
+func _objective_text() -> String:
+	var win: Dictionary = challenge_def.get("win", {})
+	var extra := ""
+	if win.has("max_misses"):
+		extra = "  ·  %d MISSES MAX" % int(win.max_misses)
+	elif challenge_mods.get("sudden_death", false):
+		extra = "  ·  DON'T MISS"
+	match str(win.get("type", "")):
+		"survive": return "SURVIVE %ds%s" % [int(win.get("value", 0)), extra]
+		"score":   return "REACH %d POINTS%s" % [int(win.get("value", 0)), extra]
+		"pops":    return "POP %d DROPS%s" % [int(win.get("value", 0)), extra]
+		"combo":   return "REACH A %dx COMBO%s" % [int(win.get("value", 0)), extra]
+		"boss":    return "SURVIVE THE WAVES — THEN KILL IT"
+	return ""
+
+func _challenge_tick(delta: float) -> void:
+	if challenge_done: return
+
+	if challenge_mods.has("frenzy_every"):
+		frenzy_timer -= delta
+		if frenzy_timer <= 0:
+			frenzy_timer = challenge_mods.frenzy_every
+			for i in range(4):
+				spawn_drop(true)
+			shake_intensity = maxf(shake_intensity, screen_shake_strength * 0.5)
+
+	if challenge_mods.get("force_event", "") == "meteor_rain":
+		meteor_rain_timer -= delta
+		if meteor_rain_timer <= 0:
+			meteor_rain_timer = randf_range(5.0, 8.0)
+			var old_force = force_drop_type
+			force_drop_type = ForceDropType.METEOR
+			spawn_drop()
+			force_drop_type = old_force
+
+	if boss_phase >= 0:
+		_boss_tick(delta)
+
+	# Boss bar tracks the fight; ambience vignette breathes.
+	if boss_bar != null and is_instance_valid(boss_bar):
+		if boss_ctrl_ref != null and is_instance_valid(boss_ctrl_ref):
+			boss_bar.set_frac(1.0 - boss_ctrl_ref.get_progress())
+		elif boss_drop_ref != null and is_instance_valid(boss_drop_ref):
+			boss_bar.set_frac(float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
+	if challenge_vignette != null:
+		var breathe := 2.6 if challenge_mods.get("sudden_death", false) else 1.6
+		challenge_vignette.modulate.a = 0.55 + 0.35 * sin(Time.get_ticks_msec() / 1000.0 * breathe)
+
+	_check_challenge_win()
+
+func _check_challenge_win() -> void:
+	if challenge_done: return
+	var win: Dictionary = challenge_def.get("win", {})
+	var t: String = win.get("type", "")
+	var v: float = win.get("value", 0.0)
+	var met := false
+	var prog := 0.0
+	match t:
+		"survive":
+			met = GameManager.survival_time >= v
+			prog = GameManager.survival_time / maxf(1.0, v)
+		"score":
+			met = GameManager.score >= v
+			prog = GameManager.score / maxf(1.0, v)
+		"pops":
+			met = challenge_pops >= int(v)
+			prog = challenge_pops / maxf(1.0, v)
+		"combo":
+			met = current_multiplier >= int(v)
+			prog = float(current_multiplier - 1) / maxf(1.0, v - 1.0)
+		"boss":
+			met = false # won only by killing the boss (drop pop / serpent signal)
+			prog = minf(0.6, maxf(0.0, boss_phase) * 0.15)
+			if boss_phase == 4 and boss_ctrl_ref != null and is_instance_valid(boss_ctrl_ref):
+				prog = 0.6 + 0.4 * boss_ctrl_ref.get_progress()
+			elif boss_phase == 4 and boss_drop_ref != null and is_instance_valid(boss_drop_ref):
+				prog = 0.6 + 0.4 * (1.0 - float(boss_drop_ref.tap_health) / maxf(1.0, boss_max_hp))
+	GameManager.challenge_progress = clampf(prog, 0.0, 1.0) # feeds Second Wind
+
+	# Live objective readout, pulsing when the goal is close.
+	if objective_label != null and is_instance_valid(objective_label):
+		match t:
+			"survive": objective_label.text = "%d / %ds" % [int(GameManager.survival_time), int(v)]
+			"score":   objective_label.text = "%d / %d PTS" % [GameManager.score, int(v)]
+			"pops":    objective_label.text = "%d / %d POPS" % [challenge_pops, int(v)]
+			"combo":   objective_label.text = "%dx / %dx COMBO" % [current_multiplier, int(v)]
+		if prog >= 0.8:
+			var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 130.0)
+			objective_label.add_theme_color_override("font_color", UIKit.TEXT_MID.lerp(UIKit.TEAL, pulse))
+		var win_dict: Dictionary = challenge_def.get("win", {})
+		if win_dict.has("max_misses"):
+			objective_label.text += "   ·   %d/%d MISSES" % [challenge_misses, int(win_dict.max_misses)]
+
+	if met:
+		_challenge_win()
+
+func _challenge_win() -> void:
+	if challenge_done: return
+	challenge_done = true
+	is_playing = false
+	AudioManager.play_sfx("rainbow")
+	AudioManager.vibrate("rainbow")
+	shake_intensity = screen_shake_strength * 2.0
+	if boss_bar != null and is_instance_valid(boss_bar):
+		boss_bar.set_frac(0.0)
+		boss_bar.shatter()
+	# Victory beat: white flash + brief slow-mo before the celebration lands.
+	Engine.time_scale = 0.3
+	get_tree().create_timer(0.5, true, false, true).timeout.connect(func():
+		Engine.time_scale = 1.0
+	)
+	var t = ThemeManager.get_equipped_theme()
+	event_overlay.color = t.get("drop_color", Color.WHITE)
+	event_overlay.modulate.a = 0.6
+	_start_event("CHALLENGE COMPLETE!", 3.0, active_event, Color(0.4, 1.0, 0.6))
+	var center = Vector2(360, (get_screen_top() + get_screen_bottom()) / 2.0)
+	_spawn_particle(center, Color(0.4, 1.0, 0.6), false, true)
+	get_tree().create_timer(1.8).timeout.connect(GameManager.challenge_won)
+
+func _challenge_fail() -> void:
+	if challenge_done: return
+	challenge_done = true
+	is_playing = false
+	AudioManager.play_sfx("game_over")
+	AudioManager.vibrate("game_over")
+	GameManager.trigger_game_over()
+
+func _boss_tick(delta: float) -> void:
+	boss_timer -= delta
+	match boss_phase:
+		0:
+			if boss_timer <= 0:
+				_start_event("WAVE 1 — THE GATHERING", 3.0, active_event, Color(1.0, 0.8, 0.3))
+				for i in range(5):
+					spawn_drop(true)
+				boss_phase = 1
+				boss_timer = 12.0
+		1:
+			if boss_timer <= 0:
+				_start_event("WAVE 2 — THE SURGE", 3.0, active_event, Color(1.0, 0.5, 0.2))
+				frenzy_timer = 0.1
+				challenge_mods["frenzy_every"] = 5.0
+				boss_phase = 2
+				boss_timer = 14.0
+		2:
+			if boss_timer <= 0:
+				_start_event("WAVE 3 — THE FURY", 3.0, active_event, Color(1.0, 0.3, 0.3))
+				challenge_mods["frenzy_every"] = 3.5
+				challenge_speed_mult *= 1.15
+				boss_phase = 3
+				boss_timer = 14.0
+		3:
+			if boss_timer <= 0:
+				_spawn_boss()
+				boss_phase = 4
+		4:
+			if boss_ctrl_ref != null:
+				pass # controller bosses run their own show
+			# The Warden escaped off the bottom without dying? It returns, angrier.
+			elif boss_drop_ref == null or not is_instance_valid(boss_drop_ref) \
+					or boss_drop_ref.state == boss_drop_ref.DropState.INACTIVE:
+				if not challenge_done:
+					_start_event("IT RETURNS…", 2.0, active_event, Color(1.0, 0.4, 1.0))
+					_spawn_boss_drop()
+
+func _spawn_boss() -> void:
+	_boss_intro()
+	# Boss archetype per challenge def: titan (giant drop) / serpent / core / hydra.
+	match str(challenge_def.get("boss_type", "titan")):
+		"serpent":    _spawn_ctrl_boss(StormSerpent, "THE SERPENT RISES")
+		"core":       _spawn_ctrl_boss(MonsoonCore, "THE CORE IGNITES")
+		"hydra":      _spawn_ctrl_boss(HydraVat, "THE HYDRA WAKES")
+		"rainfather": _spawn_ctrl_boss(Rainfather, "THE SKY DARKENS")
+		_:            _spawn_boss_drop()
+	_spawn_boss_bar()
+
+func _boss_intro() -> void:
+	# Cinematic beat: brief slow-mo + letterbox bars while the banner lands.
+	Engine.time_scale = 0.35
+	get_tree().create_timer(0.9, true, false, true).timeout.connect(func():
+		Engine.time_scale = 1.0
+	)
+	for top in [true, false]:
+		var bar := ColorRect.new()
+		bar.color = Color(0, 0, 0, 0.85)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.size = Vector2(720, 92)
+		bar.position = Vector2(0, -92.0 if top else 1280.0)
+		game_ui.add_child(bar)
+		var target_y := 0.0 if top else 1188.0
+		var away_y := -92.0 if top else 1280.0
+		var tw := create_tween()
+		tw.tween_property(bar, "position:y", target_y, 0.28).set_ease(Tween.EASE_OUT)
+		tw.tween_interval(1.3)
+		tw.tween_property(bar, "position:y", away_y, 0.3).set_ease(Tween.EASE_IN)
+		tw.tween_callback(bar.queue_free)
+
+func _spawn_boss_bar() -> void:
+	boss_bar = BossBar.new()
+	game_ui.add_child(boss_bar)
+	var t = ThemeManager.get_equipped_theme()
+	boss_bar.setup(str(challenge_def.get("name", "BOSS")).replace("⚔ ", ""), t.get("drop_color", Color.WHITE))
+	if objective_label: # boss bar replaces the objective chip
+		objective_label.get_parent().visible = false
+
+func _spawn_ctrl_boss(boss_script: GDScript, banner: String) -> void:
+	_start_event(banner, 3.0, active_event, Color(1.0, 0.85, 0.4))
+	shake_intensity = screen_shake_strength * 2.5
+	var s: Node2D = boss_script.new()
+	var t = ThemeManager.get_equipped_theme()
+	s.accent = t.get("drop_color", Color(0.4, 1.0, 0.5))
+	s.gameplay = self
+	if "volley_type" in s and challenge_mods.has("core_volley"):
+		s.volley_type = int(challenge_mods.core_volley)
+	add_child(s)
+	s.defeated.connect(_challenge_win)
+	if s.has_signal("flood_damage"):
+		s.flood_damage.connect(func(amt): _on_drop_missed(amt, false))
+	boss_ctrl_ref = s
+
+## Titan phase escalation — called by the boss drop on every hit taken.
+func _on_boss_titan_hit(drop: Area2D) -> void:
+	var frac := float(drop.tap_health) / maxf(1.0, boss_max_hp)
+	if frac <= 0.33 and not _titan_p3:
+		_titan_p3 = true
+		_start_event("IT RAGES!", 2.5, active_event, Color(1.0, 0.35, 0.3))
+		challenge_speed_mult *= 1.12
+		shake_intensity = screen_shake_strength * 2.0
+		trigger_hit_pause(0.06)
+		for i in range(4):
+			spawn_drop(true)
+	elif frac <= 0.66 and not _titan_p2:
+		_titan_p2 = true
+		_start_event("IT CRACKS!", 2.5, active_event, Color(1.0, 0.7, 0.3))
+		shake_intensity = screen_shake_strength * 1.5
+		for i in range(3):
+			spawn_drop(true)
+
+func _spawn_boss_drop() -> void:
+	_start_event("THE WARDEN APPEARS", 3.0, active_event, Color(0.9, 0.4, 1.0))
+	shake_intensity = screen_shake_strength * 2.5
+	var d = spawn_specific_drop(Vector2(360, get_screen_top() + 140.0), 7, 3.0) # giant METEOR shell
+	if d:
+		# Base 24 taps, softened by honest pity (-2 per 3 failed attempts, max -6).
+		var hp := ChallengeManager.get_boss_hp(challenge_def.get("id", ""), 24)
+		boss_max_hp = float(hp)
+		d.tap_health = hp
+		d.is_boss_drop = true
+		d._update_shader_liquid_type() # wear the stage's own liquid, not meteor slime
+		d.queue_redraw()
+		d.meteor_generation = 2   # boss does not split on death
+		d.is_boss_drop = true
+		d.is_targeted_by_turret = true # auto-turret can't cheese the boss
+		d.fall_speed = 32.0            # slow, inevitable descent = the timer
+		d.fall_velocity = 32.0
+		d.bounce_velocity_x = 140.0    # prowls side to side
+		boss_drop_ref = d
+
+func _setup_glow() -> void:
+	# Bloom on the bright neon/liquid highlights — the single biggest quality lift.
+	# Shaders clamp to 1.0, so a sub-1.0 HDR threshold blooms the brightest areas.
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CANVAS
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_strength = 1.1
+	env.glow_bloom = 0.15
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	env.glow_hdr_threshold = 0.75
+	env.glow_hdr_scale = 2.0
+	env.set_glow_level(1, 0.0)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(3, 1.0)
+	env.set_glow_level(4, 0.6)
+	env.set_glow_level(5, 0.0)
+	# Subtle colour grade: richer, more vibrant liquid without crushing the UI.
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.02
+	env.adjustment_contrast = 1.07
+	env.adjustment_saturation = 1.16
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
 
 func _create_soft_particle_texture() -> GradientTexture2D:
 	var tex = GradientTexture2D.new()
@@ -632,7 +1075,22 @@ func _setup_ability_ui() -> void:
 	var mat = CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	ability_icon_rect.material = mat
-	
+
+	# Dark backing disc so the additive (neon-on-black) icon reads crisply over
+	# bright backgrounds instead of washing out.
+	var backing = Panel.new()
+	backing.custom_minimum_size = Vector2(118, 118)
+	backing.size = Vector2(118, 118)
+	backing.position = Vector2(1, 1)
+	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bstyle = StyleBoxFlat.new()
+	bstyle.bg_color = Color(0.03, 0.05, 0.09, 0.8)
+	bstyle.set_corner_radius_all(59)
+	bstyle.set_border_width_all(2)
+	bstyle.border_color = Color(0.2, 0.85, 1.0, 0.45)
+	backing.add_theme_stylebox_override("panel", bstyle)
+	ability_container.add_child(backing)
+
 	ability_container.add_child(ability_icon_rect)
 	
 	ability_progress = TextureProgressBar.new()
@@ -712,15 +1170,18 @@ func _process(delta: float) -> void:
 	if is_playing and not get_tree().paused:
 		GameManager.survival_time += delta
 		
-		# Check level up
-		if current_level_index < levels.size() - 1:
+		# Check level up (main mode only — challenges lock to their stage)
+		if not is_challenge and current_level_index < levels.size() - 1:
 			if GameManager.survival_time >= levels[current_level_index + 1].time:
 				current_level_index += 1
 				_trigger_level_up()
-				
+
 		if not event_triggered_for_level and GameManager.survival_time >= levels[current_level_index].time + 15.0:
 			_trigger_event_for_current_level()
 			event_triggered_for_level = true
+
+		if is_challenge:
+			_challenge_tick(delta)
 			
 		if event_timer > 0:
 			event_timer -= delta
@@ -849,8 +1310,8 @@ func _process(delta: float) -> void:
 			
 			if ev == "overdrive":
 				theme_spawn_mult *= 0.33 # 3x faster spawns
-				
-			spawn_timer = current_spawn_interval * theme_spawn_mult
+
+			spawn_timer = current_spawn_interval * theme_spawn_mult / challenge_spawn_mult
 			
 	if debug_panel.visible:
 		update_debug_ui()
@@ -870,7 +1331,7 @@ func _use_ability() -> void:
 	AudioManager.play_sfx("power_up")
 	
 	if active_ability == "time_warp":
-		freeze_timer = max(freeze_timer, 5.0) # Using existing freeze logic
+		freeze_timer = max(freeze_timer, 5.0 + ChallengeManager.get_buff_sum("time_warp", "duration_add"))
 		freeze_overlay.visible = true
 		freeze_overlay.modulate = Color(0.3, 0.2, 1.0, 0.6) # Deep Indigo
 		freeze_particles.emitting = true
@@ -882,7 +1343,7 @@ func _use_ability() -> void:
 		tw.tween_property(event_overlay, "modulate:a", 0.0, 0.5)
 	elif active_ability == "evaporation":
 		evaporation_particles.position.y = get_screen_bottom() - current_flood * 5.0 # Emit exactly from top of flood
-		var target_flood = max(0.0, current_flood - 30.0)
+		var target_flood = max(0.0, current_flood - 30.0 * ChallengeManager.get_buff_product("evaporation", "power_mult"))
 		var tw = create_tween()
 		tw.tween_property(self, "current_flood", target_flood, 0.5).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_QUAD)
 		tw.parallel().tween_method(_update_flood_visual_smooth_raw, current_flood, target_flood, 0.5)
@@ -897,6 +1358,10 @@ func _use_ability() -> void:
 		AudioManager.play_sfx("pop")
 	elif active_ability == "tidal_wave":
 		is_tidal_wave_active = true
+		var extra_drain = ChallengeManager.get_buff_sum("tidal_wave", "wave_drain")
+		if extra_drain > 0.0:
+			current_flood = max(0.0, current_flood - extra_drain)
+			_update_flood_visual_smooth(0.0)
 		tidal_wave_y = get_screen_bottom()
 		tidal_wave_rect.visible = true
 		tidal_wave_particles.emitting = true
@@ -907,7 +1372,7 @@ func _use_ability() -> void:
 		tw.tween_property(event_overlay, "modulate:a", 0.0, 1.0)
 	elif active_ability == "midas_touch":
 		is_midas_active = true
-		midas_timer = 8.0
+		midas_timer = 8.0 + ChallengeManager.get_buff_sum("midas_touch", "duration_add")
 		midas_particles.emitting = true
 		for d in drop_container.get_children():
 			if d.has_method("pop") and d.state == d.DropState.FALLING:
@@ -915,7 +1380,7 @@ func _use_ability() -> void:
 				_spawn_particle(d.position, Color(1.0, 0.9, 0.2))
 	elif active_ability == "auto_turret":
 		is_turret_active = true
-		turret_timer = 4.0
+		turret_timer = 4.0 + ChallengeManager.get_buff_sum("auto_turret", "duration_add")
 		if turret_base:
 			turret_base.visible = true
 
@@ -929,30 +1394,71 @@ func _update_flood_visual_smooth_raw(val: float) -> void:
 
 func _trigger_level_up() -> void:
 	var new_level = levels[current_level_index]
-	ThemeManager.equip_theme(new_level.theme) # Actually, ThemeManager will return equipped theme
+	ThemeManager.equip_theme(new_level.theme)
 	var t = ThemeManager.get_theme(new_level.theme)
-	ThemeManager.equip_theme(new_level.theme) # Make sure it's globally equipped
-	
+
 	event_triggered_for_level = false
 	if active_event != "chaos":
 		active_event = ""
 		event_timer = 0.0
-	
-	level_up_label.text = "LEVEL %d - %s" % [current_level_index + 1, t.name.to_upper()]
-	
+
+	if not is_challenge:
+		ChallengeManager.record_stage_reached(current_level_index)
+
+	# Challenges use the reveal banner for their own name, and skip the depth bonus.
+	var is_first = (current_level_index == 0) or is_challenge
+
+	# --- Bold "new environment" reveal ---
+	if is_challenge:
+		level_up_label.text = "CHALLENGE\n%s" % str(challenge_def.get("name", "")).to_upper()
+	else:
+		level_up_label.text = "LEVEL %d\n%s" % [current_level_index + 1, t.name.to_upper()]
+	level_up_label.add_theme_font_size_override("font_size", 60)
+	level_up_label.add_theme_color_override("font_color", t.drop_color.lightened(0.3))
+	level_up_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	level_up_label.add_theme_constant_override("outline_size", 14)
+	level_up_label.pivot_offset = level_up_label.size / 2.0
+	level_up_label.scale = Vector2(0.4, 0.4)
+	level_up_label.modulate = Color(2.0, 2.0, 2.0, 0.0) # Bright + invisible to start
+
 	var tween = create_tween()
-	tween.tween_property(level_up_label, "modulate:a", 1.0, 0.5)
-	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
-	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.5).set_delay(2.0)
-	
+	tween.tween_property(level_up_label, "modulate", Color(1.2, 1.2, 1.2, 1.0), 0.25)
+	tween.parallel().tween_property(level_up_label, "scale", Vector2(1.15, 1.15), 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(level_up_label, "scale", Vector2(1.0, 1.0), 0.15)
+	tween.tween_interval(1.4)
+	tween.tween_property(level_up_label, "modulate:a", 0.0, 0.6)
+
 	var old_theme = levels[max(0, current_level_index - 1)].theme
 	BackgroundManager.update_background(old_theme, levels[current_level_index].theme)
 	var pool_tween = create_tween()
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/top_color", t.drop_color, 2.0)
 	pool_tween.tween_property(flood_rect.material, "shader_parameter/bottom_color", t.flood_color, 2.0)
 	flood_rect.material.set_shader_parameter("liquid_type", t.get("shader_type", 0))
-	
-	AudioManager.play_sfx("power_up")
+
+	if is_first:
+		AudioManager.play_sfx("power_up")
+		return
+
+	# --- Celebration: reaching a new depth should feel like an event ---
+	AudioManager.play_sfx("rainbow")
+	AudioManager.vibrate("rainbow")
+	shake_intensity = screen_shake_strength * 1.5
+	trigger_hit_pause(0.06)
+
+	# Theme-coloured screen flash
+	event_overlay.color = t.drop_color
+	event_overlay.modulate.a = 0.55
+	var flash = create_tween()
+	flash.tween_property(event_overlay, "modulate:a", 0.0, 0.6)
+
+	# Burst of light at the centre + a tangible "you went deeper" reward
+	var cx = get_viewport().get_visible_rect().size.x / 2.0
+	var center = Vector2(cx, (get_screen_top() + get_screen_bottom()) / 2.0)
+	_spawn_particle(center, t.drop_color, false, true)
+	var depth_bonus = current_level_index * 250
+	GameManager.score += depth_bonus
+	_spawn_floating_text("NEW DEPTH!  +%d" % depth_bonus, center + Vector2(0, 90), t.drop_color.lightened(0.4))
+	update_hud()
 
 func _start_event(title: String, duration: float, internal_name: String, color: Color = Color.WHITE) -> void:
 	active_event = internal_name
@@ -1041,7 +1547,8 @@ func _trigger_chaos_event() -> void:
 func _count_active_powerups() -> int:
 	var count = 0
 	for d in drop_container.get_children():
-		if d.has_method("pop") and d.state != d.DropState.INACTIVE and d.state != d.DropState.POPPING and d.type != d.DropType.NORMAL:
+		if d.has_method("pop") and d.state != d.DropState.INACTIVE and d.state != d.DropState.POPPING \
+				and d.type >= d.DropType.DRAIN and d.type <= d.DropType.RAINBOW:
 			count += 1
 	return count
 
@@ -1064,6 +1571,7 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 	var act_speed = current_drop_speed
 	if ev == "eruption": act_speed = min(current_drop_speed * 1.5, 950.0)
 	elif ev == "overdrive": act_speed = current_drop_speed * 0.6
+	act_speed *= challenge_speed_mult
 	
 	drop.gameplay_ref = self
 	drop.fall_speed = act_speed
@@ -1092,12 +1600,22 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 	elif ev == "toxic":
 		chosen_type = drop.DropType.NORMAL # Don't spawn powerups during Corrosive, just normal drops
 	else:
-		if GameManager.survival_time >= min_time_before_powerups:
+		if GameManager.survival_time >= min_time_before_powerups and not challenge_mods.get("no_powerups", false):
 			if _count_active_powerups() < max_active_powerups:
 				if randf() < current_power_up_chance:
 					chosen_type = _pick_random_powerup()
 					
+	# Challenge special rain: a share of normal drops become the stage's new-mechanic type.
+	if is_challenge and chosen_type == drop.DropType.NORMAL \
+			and challenge_mods.has("special_rain") and randf() < 0.45:
+		match str(challenge_mods.special_rain):
+			"shielded": chosen_type = drop.DropType.SHIELDED
+			"clockwork": chosen_type = drop.DropType.CLOCKWORK
+			"phantom": chosen_type = drop.DropType.PHANTOM
+
 	drop.type = chosen_type
+	if is_challenge and chosen_type == drop.DropType.NORMAL and challenge_mods.has("tiny_drops"):
+		drop.custom_scale_mult = challenge_mods.tiny_drops
 	if drop.has_method("apply_stats"):
 		drop.apply_stats()
 	drop.queue_redraw()
@@ -1134,16 +1652,21 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.bounce_velocity_x = randf_range(300.0, 500.0) * (1.0 if randf() > 0.5 else -1.0)
 	else:
 		drop.is_pinata = false
+
+	if is_challenge and challenge_mods.has("sway") and drop.bounce_velocity_x == 0.0:
+		drop.bounce_velocity_x = challenge_mods.sway * (1.0 if randf() > 0.5 else -1.0)
 		
 	var current_time = Time.get_ticks_msec() / 1000.0
-	var requested_formation = randf_range(0.8, 3.5)
+	# Tighter, snappier formation: drops drip and fall quickly instead of hanging at the
+	# ceiling for up to 3.5s (which read as sticky/unresponsive on the water level).
+	var requested_formation = randf_range(0.45, 1.1)
 	var proposed_fall_time = current_time + requested_formation
 	
 	if proposed_fall_time < next_available_fall_time:
 		proposed_fall_time = next_available_fall_time
 		requested_formation = proposed_fall_time - current_time
 		
-	next_available_fall_time = proposed_fall_time + 0.35 # Enforce at least 0.35s gap between drops falling
+	next_available_fall_time = proposed_fall_time + 0.2 # Small gap between drops falling (was 0.35, felt over-metered)
 	
 	# Pass the exact formation duration to the drop
 	drop.spawn_formation_duration = requested_formation
@@ -1152,38 +1675,45 @@ func spawn_drop(is_cluster_child: bool = false) -> void:
 		drop.spawn_formation_duration = 0.1 # Shoot up instantly!
 		var travel_dist = (spawn_y - get_screen_top()) * randf_range(0.75, 0.95)
 		drop.fall_velocity = -sqrt(2.0 * 1500.0 * travel_dist) # Dynamically calculate velocity to reach near the top!
-	elif ev == "overdrive": 
+	elif ev == "overdrive":
 		drop.spawn_formation_duration *= 0.5 # Form faster during overdrive
-	
+
+	# Everything is configured — NOW run the drip animation with the real parameters.
+	drop.start_formation()
+
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
 
-func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_velocity_y: float = 0.0, custom_vel_x: float = 0.0) -> void:
-	if pool_manager == null: return
+func spawn_specific_drop(pos: Vector2, t: int, scale_mult: float, initial_velocity_y: float = 0.0, custom_vel_x: float = 0.0) -> Node:
+	if pool_manager == null: return null
 	var drop = pool_manager.get_drop()
 	drop.gameplay_ref = self
-	
-	if initial_velocity_y != 0.0:
-		drop.fall_velocity = initial_velocity_y
-		if drop.has_method("force_fall"):
-			drop.force_fall()
-	else:
-		drop.fall_velocity = current_drop_speed
-		
+
 	drop.bounce_velocity_x = custom_vel_x
 	drop.flood_damage = flood_damage_per_miss
 	drop.type = t
 	drop.custom_scale_mult = scale_mult # Apply scale before generating stats!
-	
+
 	if drop.has_method("apply_stats"):
 		drop.apply_stats()
-		
+
 	drop.queue_redraw()
 	drop.position = pos
 	drop.spawn_formation_duration = 0.2
-	
+
+	# Configure FIRST, then launch — force_fall/start_formation snap to the real
+	# type/scale (previously force_fall ran before apply_stats, so meteor splits
+	# snapped to the wrong shape).
+	if initial_velocity_y != 0.0:
+		drop.fall_velocity = initial_velocity_y
+		drop.force_fall()
+	else:
+		drop.fall_velocity = current_drop_speed
+		drop.start_formation()
+
 	drop.popped.connect(_on_drop_popped)
 	drop.missed.connect(_on_drop_missed)
+	return drop
 
 func _pick_random_powerup() -> int:
 	var total_weight = weight_drain + weight_freeze + weight_bomb + weight_shield
@@ -1203,6 +1733,11 @@ func trigger_hit_pause(duration: float = 0.05) -> void:
 	)
 
 func _on_drop_popped(drop_node: Area2D) -> void:
+	if is_challenge:
+		challenge_pops += 1
+		if boss_drop_ref != null and drop_node == boss_drop_ref:
+			boss_drop_ref = null
+			_challenge_win()
 	var t = drop_node.type
 	var pos = drop_node.position
 	var base_score = int(drop_node.score_value * ThemeManager.get_equipped_theme().get("score_mult", 1.0))
@@ -1308,6 +1843,25 @@ func _on_drop_popped(drop_node: Area2D) -> void:
 			_spawn_particle(pos, drop_node.get_current_color())
 			AudioManager.play_sfx("power_up")
 			_update_flood_visual_smooth(0.0)
+		drop_node.DropType.SHIELDED, drop_node.DropType.PHANTOM:
+			GameManager.score += final_score
+			_spawn_floating_text("+%d%s" % [final_score, mult_text], pos, m_color)
+			_spawn_particle(pos, drop_node.get_current_color())
+			AudioManager.play_sfx("pop", pitch)
+			AudioManager.vibrate("pop")
+		drop_node.DropType.CLOCKWORK:
+			var cw_score = final_score * (2 if drop_node.perfect_pop else 1)
+			GameManager.score += cw_score
+			if drop_node.perfect_pop:
+				_spawn_floating_text("PERFECT! +%d" % cw_score, pos, Color(1.0, 0.9, 0.4))
+				_spawn_ripple(pos, Color(1.0, 0.85, 0.3), 1.7)
+				trigger_hit_pause(0.03)
+				AudioManager.play_sfx("rainbow")
+			else:
+				_spawn_floating_text("+%d%s" % [cw_score, mult_text], pos, m_color)
+				AudioManager.play_sfx("pop", pitch * 1.15)
+			_spawn_particle(pos, Color(1.0, 0.8, 0.3))
+			AudioManager.vibrate("pop")
 		drop_node.DropType.ACID:
 			var toxic_score = final_score * 5
 			GameManager.score += toxic_score
@@ -1337,7 +1891,13 @@ func _on_drop_missed(flood_value: float, break_streak: bool = true) -> void:
 		
 	if break_streak:
 		_reset_streak()
-		
+
+	if is_challenge and not challenge_done and flood_value > 5.0:
+		challenge_misses += 1
+		var win: Dictionary = challenge_def.get("win", {})
+		if challenge_mods.get("sudden_death", false) or (win.has("max_misses") and challenge_misses > int(win.max_misses)):
+			flood_value = max_flood # instant fail through the normal game-over path below
+
 	current_flood += flood_value
 	shake_intensity = screen_shake_strength
 	trigger_hit_pause(0.05)
@@ -1368,10 +1928,56 @@ func _spawn_particle(pos: Vector2, col: Color, is_bomb: bool = false, is_rainbow
 	p.position = pos
 	p.play_effect(col, is_bomb, is_rainbow)
 
+var _soft_tex: Texture2D
+var _ripple_tex: Texture2D
+
+func _spawn_ripple(pos: Vector2, color: Color, max_scale: float = 1.4) -> void:
+	# Cheap expanding shockwave ring — a flattened ellipse like a real liquid ripple.
+	if not _ripple_tex: return
+	var ring = Sprite2D.new()
+	ring.texture = _ripple_tex
+	ring.position = pos
+	ring.z_index = 60
+	ring.modulate = Color(color.r, color.g, color.b, 0.85)
+	ring.scale = Vector2(0.15, 0.12)
+	ring.material = _additive_material()
+	add_child(ring)
+	var tw = create_tween()
+	tw.tween_property(ring, "scale", Vector2(max_scale, max_scale * 0.65), 0.32).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(ring, "modulate:a", 0.0, 0.32)
+	tw.tween_callback(ring.queue_free)
+
+func _spawn_shield_shards(pos: Vector2, col: Color) -> void:
+	# Hex-shield shatter: six glowing fragments fly outward and fade.
+	for i in range(6):
+		var ang := TAU * float(i) / 6.0 + randf_range(-0.25, 0.25)
+		var dirv := Vector2(cos(ang), sin(ang))
+		var ln := Line2D.new()
+		ln.default_color = col
+		ln.width = 3.5
+		ln.add_point(pos + dirv * 20.0)
+		ln.add_point(pos + dirv * 40.0)
+		ln.material = _additive_material()
+		ln.z_index = 80
+		add_child(ln)
+		var tw := create_tween()
+		tw.tween_property(ln, "position", dirv * randf_range(55.0, 105.0), 0.32).set_ease(Tween.EASE_OUT)
+		tw.parallel().tween_property(ln, "modulate:a", 0.0, 0.32)
+		tw.tween_callback(ln.queue_free)
+	_spawn_ripple(pos, col, 1.15)
+
+func _spawn_flood_splash(x: float, color: Color) -> void:
+	# Splash where the drop enters the water (the current flood surface).
+	var screen_h = get_screen_bottom() - get_screen_top()
+	var surface_y = get_screen_bottom() - (current_flood / max_flood) * screen_h
+	var pos = Vector2(x, surface_y)
+	_spawn_ripple(pos, color.lightened(0.25), 2.1)
+	_spawn_particle(pos, color)
+
 func update_hud() -> void:
-	score_label.text = "Score: %d" % GameManager.score
+	score_label.text = "SCORE  %d" % GameManager.score
 	var hs = SaveManager.get_value("high_score", 0.0)
-	high_score_label.text = "Best: %d" % int(hs)
+	high_score_label.text = "BEST  %d" % int(hs)
 	
 	if current_flood > max_flood * flood_danger_threshold:
 		danger_label.text = "DANGER!"
@@ -1503,126 +2109,245 @@ func _draw_lightning(from: Vector2, to: Vector2) -> void:
 	tw.tween_property(line, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(line.queue_free)
 
-var turret_base: TextureRect
-var turret_barrel: TextureRect
+var turret_base: Sprite2D
+var turret_barrel: Sprite2D
+var laser_core: Line2D
+var muzzle_flash: Sprite2D
+var laser_impact_sprite: Sprite2D
+var active_bullets: Array = []
 var time_since_last_shot: float = 0.0
 
-func _make_transparent(img: Image) -> void:
+func _make_transparent(img: Image, thresh: float = 0.18) -> void:
+	# Chroma-key the solid background (top-left pixel) out of the turret JPEGs, with a
+	# feathered + despilled edge so there's no white/black halo around the silhouette:
+	#  - dist <= thresh           -> fully transparent (pure background)
+	#  - thresh < dist < feather  -> partial alpha, and the bg colour is un-composited
+	#                                out of the pixel (despill), killing the fringe
+	#  - dist >= feather          -> kept as-is (subject)
 	img.convert(Image.FORMAT_RGBA8)
-	var bg_color = img.get_pixel(0, 0)
+	var bg = img.get_pixel(0, 0)
+	var feather := thresh + 0.20
 	for y in range(img.get_height()):
 		for x in range(img.get_width()):
 			var c = img.get_pixel(x, y)
-			if abs(c.r - bg_color.r) < 0.15 and abs(c.g - bg_color.g) < 0.15 and abs(c.b - bg_color.b) < 0.15:
-				c.a = 0.0
-				img.set_pixel(x, y, c)
+			var dist = max(abs(c.r - bg.r), max(abs(c.g - bg.g), abs(c.b - bg.b)))
+			if dist <= thresh:
+				img.set_pixel(x, y, Color(c.r, c.g, c.b, 0.0))
+			elif dist < feather:
+				var a = (dist - thresh) / (feather - thresh)
+				var inv = 1.0 - a
+				var sr = clamp((c.r - inv * bg.r) / max(a, 0.04), 0.0, 1.0)
+				var sg = clamp((c.g - inv * bg.g) / max(a, 0.04), 0.0, 1.0)
+				var sb = clamp((c.b - inv * bg.b) / max(a, 0.04), 0.0, 1.0)
+				img.set_pixel(x, y, Color(sr, sg, sb, a))
+
+func _additive_material() -> CanvasItemMaterial:
+	var m = CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	return m
+
+func _load_keyed_sprite(path: String, thresh: float) -> Sprite2D:
+	var s = Sprite2D.new()
+	# Use the IMPORTED texture (export-safe) and chroma-key its image, rather than
+	# Image.load() which reads the raw file and doesn't work in an exported build.
+	var tex := load(path) as Texture2D
+	if tex:
+		var img := tex.get_image()
+		if img:
+			if img.is_compressed():
+				img.decompress()
+			_make_transparent(img, thresh)
+			s.texture = ImageTexture.create_from_image(img)
+	return s
 
 func _setup_turret() -> void:
-	turret_base = TextureRect.new()
-	var img_base = Image.new()
-	if img_base.load("res://assets/turret_base.jpg") == OK:
-		_make_transparent(img_base)
-		turret_base.texture = ImageTexture.create_from_image(img_base)
-	turret_base.custom_minimum_size = Vector2(80, 80)
-	turret_base.size = Vector2(80, 80)
-	turret_base.position = Vector2(360 - 40, get_screen_bottom() - 100)
-	turret_base.modulate = Color(0.8, 0.8, 0.8, 0.8)
-	turret_base.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_base.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Real turret art (chroma-keyed): circular base on white bg + vertical cannon on black bg.
+	turret_base = _load_keyed_sprite("res://assets/turret_base.jpg", 0.28)
+	turret_base.position = Vector2(360, get_screen_bottom() - 95)
+	turret_base.scale = Vector2(0.16, 0.16)
+	turret_base.z_index = 8 # Above the flood
 	add_child(turret_base)
-	
-	turret_barrel = TextureRect.new()
-	var img_barrel = Image.new()
-	if img_barrel.load("res://assets/turret_barrel.jpg") == OK:
-		_make_transparent(img_barrel)
-		turret_barrel.texture = ImageTexture.create_from_image(img_barrel)
-	turret_barrel.custom_minimum_size = Vector2(30, 80)
-	turret_barrel.size = Vector2(30, 80)
-	turret_barrel.position = Vector2(25, -40)
-	turret_barrel.pivot_offset = Vector2(15, 60)
-	turret_barrel.modulate = Color(0.9, 0.9, 0.9, 0.9)
-	turret_barrel.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	turret_barrel.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+
+	# Barrel pivots around its own centre (child draws above the base).
+	turret_barrel = _load_keyed_sprite("res://assets/turret_barrel.jpg", 0.14)
+	turret_barrel.position = Vector2(0, -55)
+	turret_barrel.scale = Vector2(0.95, 0.95) # Relative to the base's scale
+	# Normal blend so the metal cannon reads solid; bloom handles the orange glow.
 	turret_base.add_child(turret_barrel)
-	
+
 	var muzzle = Marker2D.new()
 	muzzle.name = "Muzzle"
-	muzzle.position = Vector2(15, 0) # Top center of barrel image
+	muzzle.position = Vector2(0, -470) # Tip of the cannon in the barrel's local space
 	turret_barrel.add_child(muzzle)
-	
+
+	# Procedural glowing beam (wide glow + white-hot core). Bloom does the rest.
 	laser_line = Line2D.new()
-	laser_line.default_color = Color(1.0, 0.2, 0.2, 0.8)
-	laser_line.width = 8.0
+	laser_line.default_color = Color(1.0, 0.12, 0.06, 0.8)
+	laser_line.width = 22.0
+	laser_line.joint_mode = Line2D.LINE_JOINT_ROUND
+	laser_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_line.material = _additive_material()
+	laser_line.z_index = 10
 	laser_line.visible = false
 	add_child(laser_line)
-	
+
+	laser_core = Line2D.new()
+	laser_core.default_color = Color(1.0, 0.62, 0.4, 1.0)
+	laser_core.width = 7.0
+	laser_core.joint_mode = Line2D.LINE_JOINT_ROUND
+	laser_core.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.end_cap_mode = Line2D.LINE_CAP_ROUND
+	laser_core.material = _additive_material()
+	laser_core.z_index = 11
+	laser_core.visible = false
+	add_child(laser_core)
+
+	var soft = _create_soft_particle_texture()
+
+	muzzle_flash = Sprite2D.new()
+	muzzle_flash.texture = soft
+	muzzle_flash.visible = false
+	muzzle_flash.z_index = 12
+	muzzle_flash.material = _additive_material()
+	add_child(muzzle_flash)
+
+	laser_impact_sprite = Sprite2D.new()
+	laser_impact_sprite.texture = soft
+	laser_impact_sprite.visible = false
+	laser_impact_sprite.z_index = 12
+	laser_impact_sprite.material = _additive_material()
+	add_child(laser_impact_sprite)
+
 func _process_turret(delta: float) -> void:
 	if not turret_barrel or not is_playing: return
-	
+
+	_process_bullets(delta)
 	time_since_last_shot += delta
-	
+
 	if laser_timer > 0:
 		laser_timer -= delta
-		if laser_timer <= 0 and laser_line:
-			laser_line.visible = false
-			
+		if laser_timer <= 0:
+			if laser_line: laser_line.visible = false
+			if laser_core: laser_core.visible = false
+
 	var target = null
 	var best_d = 800.0
-	
+
 	for child in drop_container.get_children():
-		if child.has_method("pop_by_bomb") and child.state != child.DropState.INACTIVE and child.state != child.DropState.POPPING and not child.get("is_targeted_by_turret"):
+		if child.has_method("pop_by_bomb") and child.state == child.DropState.FALLING and not child.get("is_targeted_by_turret"):
 			var d = child.global_position.distance_to(turret_base.global_position)
 			if d < best_d and child.position.y < turret_base.global_position.y:
 				best_d = d
 				target = child
-				
+
 	if target:
-		var dir = (target.global_position - (turret_base.global_position + Vector2(40, 20))).normalized()
-		turret_barrel.rotation = dir.angle() + PI/2.0
-		
+		var dir = (target.global_position - turret_barrel.global_position).normalized()
+		turret_barrel.rotation = dir.angle() + PI / 2.0
+
 		var muzzle_pos = turret_barrel.get_node("Muzzle").global_position
-		
+
 		if is_turret_active:
-			if time_since_last_shot > 0.05: # Fast laser beam!
+			if time_since_last_shot > 0.06: # Rapid laser
 				time_since_last_shot = 0.0
 				target.set("is_targeted_by_turret", true)
-				if laser_line:
-					laser_line.clear_points()
-					laser_line.add_point(muzzle_pos)
-					laser_line.add_point(target.global_position)
-					laser_line.visible = true
-				laser_timer = 0.1
+				_fire_laser(muzzle_pos, target.global_position)
+				laser_timer = 0.09
 				AudioManager.play_sfx("button")
 				target.pop_by_bomb()
 				GameManager.score += target.score_value
-				_spawn_floating_text("+%d LASER!" % target.score_value, target.position, Color(1.0, 0.2, 0.2))
+				_spawn_floating_text("+%d LASER!" % target.score_value, target.position, Color(1.0, 0.3, 0.2))
 		else:
-			var fire_rate = 3.0
+			var fire_rate = 2.0
 			if time_since_last_shot > fire_rate:
 				time_since_last_shot = 0.0
 				_fire_turret_bullet(dir, target, muzzle_pos)
-			
-func _fire_turret_bullet(dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
+
+func _build_beam_points(from: Vector2, to: Vector2) -> PackedVector2Array:
+	# Slightly jittered midpoints so the beam reads as crackling energy.
+	var pts = PackedVector2Array()
+	var n = 7
+	var perp = (to - from).normalized().orthogonal()
+	for i in range(n + 1):
+		var p = from.lerp(to, float(i) / n)
+		if i != 0 and i != n:
+			p += perp * randf_range(-7.0, 7.0)
+		pts.append(p)
+	return pts
+
+func _fire_laser(from: Vector2, to: Vector2) -> void:
+	var pts = _build_beam_points(from, to)
+	if laser_line:
+		laser_line.points = pts
+		laser_line.width = randf_range(18.0, 26.0)
+		laser_line.visible = true
+	if laser_core:
+		laser_core.points = pts
+		laser_core.visible = true
+
+	if muzzle_flash:
+		muzzle_flash.global_position = from
+		muzzle_flash.visible = true
+		muzzle_flash.modulate = Color(1.0, 0.55, 0.4, 0.9)
+		muzzle_flash.scale = Vector2(1.1, 1.1)
+		var t1 = create_tween()
+		t1.tween_property(muzzle_flash, "scale", Vector2(0.5, 0.5), 0.09)
+		t1.parallel().tween_property(muzzle_flash, "modulate:a", 0.0, 0.09)
+		t1.tween_callback(_hide_muzzle_flash)
+
+	if laser_impact_sprite:
+		laser_impact_sprite.global_position = to
+		laser_impact_sprite.visible = true
+		laser_impact_sprite.modulate = Color(1.0, 0.55, 0.45, 1.0)
+		laser_impact_sprite.scale = Vector2(1.2, 1.2)
+		var t2 = create_tween()
+		t2.tween_property(laser_impact_sprite, "scale", Vector2(3.4, 3.4), 0.15).set_ease(Tween.EASE_OUT)
+		t2.parallel().tween_property(laser_impact_sprite, "modulate:a", 0.0, 0.2)
+		t2.tween_callback(_hide_laser_impact)
+	_spawn_particle(to, Color(1.0, 0.4, 0.2))
+
+func _hide_muzzle_flash() -> void:
+	if muzzle_flash: muzzle_flash.visible = false
+
+func _hide_laser_impact() -> void:
+	if laser_impact_sprite: laser_impact_sprite.visible = false
+
+func _fire_turret_bullet(_dir: Vector2, target: Area2D, muzzle_pos: Vector2) -> void:
 	target.set("is_targeted_by_turret", true)
-	var bullet = ColorRect.new()
-	bullet.size = Vector2(8, 24)
-	bullet.color = Color(1.0, 0.8, 0.2)
-	bullet.position = muzzle_pos - Vector2(4, 12) + dir * 10.0
-	bullet.pivot_offset = Vector2(4, 12)
-	bullet.rotation = dir.angle() + PI/2.0
+	var bullet := Sprite2D.new()
+	bullet.texture = muzzle_flash.texture # Reuse the soft glow dot
+	bullet.modulate = Color(1.0, 0.85, 0.35, 1.0)
+	bullet.scale = Vector2(0.7, 0.7)
+	bullet.z_index = 9
+	bullet.material = _additive_material()
+	bullet.global_position = muzzle_pos
 	add_child(bullet)
-	
+	active_bullets.append({"node": bullet, "target": target})
 	AudioManager.play_sfx("button")
-	
-	var tw = create_tween()
-	var travel_time = bullet.position.distance_to(target.global_position) / 1000.0
-	tw.tween_property(bullet, "position", target.global_position, travel_time)
-	tw.tween_callback(func():
-		bullet.queue_free()
-		if target and is_instance_valid(target) and target.state != target.DropState.POPPING and target.state != target.DropState.INACTIVE:
-			if target.has_method("pop_by_bomb"):
-				target.pop_by_bomb()
-				GameManager.score += target.score_value
-				_spawn_floating_text("+%d TURRET!" % target.score_value, target.position, Color(1.0, 0.8, 0.2))
-				AudioManager.play_sfx("pop")
-	)
+
+func _process_bullets(delta: float) -> void:
+	var speed = 1500.0
+	for i in range(active_bullets.size() - 1, -1, -1):
+		var b = active_bullets[i]
+		var node = b["node"]
+		var tgt = b["target"]
+		if not is_instance_valid(node):
+			active_bullets.remove_at(i)
+			continue
+		# Drop gone (popped/recycled) — let the bullet fizzle out.
+		if not is_instance_valid(tgt) or tgt.state == tgt.DropState.POPPING or tgt.state == tgt.DropState.INACTIVE:
+			node.queue_free()
+			active_bullets.remove_at(i)
+			continue
+		var to = tgt.global_position
+		node.global_position = node.global_position.move_toward(to, speed * delta)
+		node.rotation = (to - node.global_position).angle()
+		if node.global_position.distance_to(to) < 42.0:
+			# Actual contact — now pop it.
+			tgt.pop_by_bomb()
+			GameManager.score += tgt.score_value
+			_spawn_floating_text("+%d TURRET!" % tgt.score_value, tgt.position, Color(1.0, 0.85, 0.3))
+			_spawn_particle(to, Color(1.0, 0.8, 0.3))
+			AudioManager.play_sfx("pop")
+			node.queue_free()
+			active_bullets.remove_at(i)

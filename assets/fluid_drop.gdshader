@@ -7,6 +7,10 @@ uniform float anchor_multiplier = 1.0;
 uniform int liquid_type = 0; // 0=Water, 1=Lava, 2=Slime, 3=Acid, 4=Rainbow, 5=Galaxy, 6=Gold, 7=Neon Plasma
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear;
 uniform bool is_slime_shape = false;
+uniform float edge_aa = 11.0; // Edge anti-alias softness (lower = softer/smoother edge)
+// Power-up identity: hue-shift the parent liquid's material toward water_color
+// while keeping its shading/highlights (0 = pure parent material).
+uniform float identity_tint : hint_range(0.0, 1.0) = 0.0;
 
 // Simple random function
 float rand(vec2 co) {
@@ -358,8 +362,14 @@ void fragment() {
             final_color += void_edge * fresnel * 3.0; // Intense glowing ring
         }
         
+        // Power-up identity tint: recolour toward water_color, luminance-preserving
+        if (identity_tint > 0.001) {
+            float lum = dot(final_color.rgb, vec3(0.333));
+            final_color.rgb = mix(final_color.rgb, water_color.rgb * (0.35 + 1.4 * lum), identity_tint);
+        }
+
         // Smooth anti-aliased edge
-        float alpha = clamp((total_energy - 1.0) * 20.0, 0.0, 1.0);
+        float alpha = clamp((total_energy - 1.0) * edge_aa, 0.0, 1.0);
         final_color.a *= alpha;
         
         COLOR = clamp(final_color, 0.0, 1.0);

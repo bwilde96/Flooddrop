@@ -10,7 +10,10 @@ enum DropType {
 	GOLD,
 	METEOR,
 	ACID,
-	NEUTRALIZER
+	NEUTRALIZER,
+	SHIELDED,   # hex forcefield: first tap shatters the shield, second pops
+	CLOCKWORK,  # rhythm: tap when the shrinking ring hits the drop, or be deflected
+	PHANTOM,    # phases between solid and untappable ghost
 }
 
 signal popped(drop_node: Area2D)
@@ -64,32 +67,22 @@ func apply_stats() -> void:
 		tap_health = 1
 		drop_radius = 40.0 * theme_mult * custom_scale_mult
 
-	if type == DropType.ACID:
-		icon_label.text = "☠"
-		icon_label.add_theme_color_override("font_color", Color(0.2, 0.0, 0.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 0.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.NEUTRALIZER:
-		icon_label.text = "✚"
-		icon_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
-		icon_label.add_theme_color_override("font_outline_color", Color(0.0, 0.5, 1.0))
-		icon_label.add_theme_constant_override("outline_size", 8)
-		icon_label.add_theme_color_override("font_shadow_color", Color(0,0,0, 0.8))
-		icon_label.add_theme_constant_override("shadow_outline_size", 12)
-		icon_label.show()
-	elif type == DropType.GOLD:
-		icon_label.hide()
-	else:
-		icon_label.hide()
+	shield_hp = 1 if type == DropType.SHIELDED else 0
+
+	# All special-drop symbols are drawn in _draw() now (one system = consistent
+	# centering), so the old emoji label stays hidden. (ACID previously showed a ☠
+	# label AND a drawn X — a double symbol.)
+	icon_label.hide()
 		
 	# Position is synced with shader in the forming tween, but we set its horizontal center here
 	icon_label.position.x = -60
 		
 	if collision_shape and collision_shape.shape is CircleShape2D:
-		collision_shape.shape.radius = drop_radius * 2.5
+		var tap_mult := 2.5
+		# Magnetic Tap passive: widen the hit area so taps are more forgiving.
+		if gameplay_ref and "magnetic_tap" in gameplay_ref.owned_passives:
+			tap_mult = 3.25
+		collision_shape.shape.radius = drop_radius * tap_mult
 	visuals.scale = Vector2.ONE * custom_scale_mult
 var gameplay_ref: Node = null
 var tap_health: int = 1
@@ -120,6 +113,21 @@ var _tween: Tween = null
 var theme_cache: Dictionary = {}
 var bounce_count: int = 0
 var fall_velocity: float = 0.0
+# Velocity-based slime bounce (replaces a position tween that fought _process each frame)
+const BOUNCE_GRAVITY := 3000.0
+var is_bouncing: bool = false
+var bounce_vel_y: float = 0.0
+var release_boost: float = 0.0 # decaying extra jiggle right after detaching from the ceiling
+
+# --- New-mechanic state (SHIELDED / CLOCKWORK / PHANTOM) ---
+const CLOCK_PERIOD := 1.3
+var shield_hp: int = 0
+var clock_t: float = 0.0
+var clock_bad_taps: int = 0
+var clock_flash: float = 0.0   # red mistime flash, decays
+var perfect_pop: bool = false
+var phantom_t: float = 0.0
+var is_ghost: bool = false
 
 var tex_drop_base = null
 var tex_drop_high = null
@@ -136,6 +144,7 @@ var next_glitch_target: float = 0.5
 var meteor_generation: int = 0
 var icon_label: Label = null
 var is_targeted_by_turret: bool = false
+var is_boss_drop: bool = false
 
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 @onready var visuals: Node2D = $Visuals
@@ -169,13 +178,17 @@ func on_pool_activate(pool: Node) -> void:
 	state = DropState.FORMING
 	visible = true
 	modulate.a = 1.0
-	collision_shape.set_deferred("disabled", true)
+	# Enable the hit area immediately so drops are tappable WHILE forming.
+	# (Previously disabled until FALLING, which made fresh drops feel unresponsive.)
+	collision_shape.set_deferred("disabled", false)
 	_disconnect_all(popped)
 	_disconnect_all(missed)
 	type = DropType.NORMAL
 	
 	theme_cache = ThemeManager.get_equipped_theme()
 	bounce_count = 0
+	is_bouncing = false
+	bounce_vel_y = 0.0
 	fall_velocity = fall_speed
 	custom_scale_mult = 1.0
 	is_eruption = false
@@ -186,6 +199,14 @@ func on_pool_activate(pool: Node) -> void:
 	next_glitch_target = randf_range(0.3, 0.8)
 	meteor_generation = 0
 	is_targeted_by_turret = false
+	is_boss_drop = false
+	shield_hp = 0
+	clock_t = randf() * CLOCK_PERIOD
+	clock_bad_taps = 0
+	clock_flash = 0.0
+	perfect_pop = false
+	phantom_t = randf() * 1.8
+	is_ghost = false
 	
 	var current_color = get_current_color()
 	fluid_rect.material.set_shader_parameter("water_color", current_color)
@@ -197,88 +218,75 @@ func on_pool_activate(pool: Node) -> void:
 		collision_shape.shape.radius = drop_radius * 2.5
 		
 	visuals.scale = Vector2.ONE
-	
+
 	if _tween and _tween.is_valid():
 		_tween.kill()
-	
-	var actual_duration = spawn_formation_duration * theme_cache.get("form_mult", 1.0)
-	var s_type = theme_cache.get("shader_type", 0)
-	var final_radius = 32.0 * size_m
-	var final_y = 50.0
-	
-	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
-		final_radius = 45.0 * size_m
-		final_y = 50.0
-	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
-		final_radius = 28.0 * size_m
-		final_y = 70.0
-	
-	# Start as a tiny blob on the ceiling
+
+	# Show the pre-formation state (tiny blob on the ceiling) but do NOT start the
+	# formation tween here: Gameplay configures type/size/duration AFTER activation,
+	# so starting now would animate with stale parameters (the old "formation runs
+	# wrong" bug). Gameplay calls start_formation() once the drop is configured.
 	fluid_rect.material.set_shader_parameter("drop_y", 25.0)
 	fluid_rect.material.set_shader_parameter("drop_radius", 5.0)
 	fluid_rect.material.set_shader_parameter("anchor_multiplier", 1.0)
-	
+
+func _get_form_targets() -> Dictionary:
+	# Single source of truth for the fully-formed shader shape (used by both the
+	# formation tween and force_fall so they can never diverge).
+	var size_m = theme_cache.get("size_mult", 1.0) if theme_cache else 1.0
+	var s_type = theme_cache.get("shader_type", 0) if theme_cache else 0
+	var t = {"radius": 35.0 * size_m, "y": 50.0}
+	if s_type == 1 or s_type == 2 or s_type == 6: # Thick (Lava, Slime, Gold)
+		t.radius = 48.0 * size_m
+	elif s_type == 0 or s_type == 3: # Thin (Water, Acid)
+		t.radius = 31.0 * size_m
+		t.y = 70.0
+	return t
+
+func start_formation() -> void:
+	# Called by Gameplay AFTER the drop is fully configured (type, scale, duration).
+	if state != DropState.FORMING: return
+	if _tween and _tween.is_valid():
+		_tween.kill()
+
+	var actual_duration = maxf(0.05, spawn_formation_duration * theme_cache.get("form_mult", 1.0))
+	var s_type = theme_cache.get("shader_type", 0)
+	var targets = _get_form_targets()
+
 	_tween = create_tween()
 	_tween.set_parallel(true)
-	# Phase 1: Build mass
-	_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_radius", val), 5.0, final_radius, actual_duration * 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-	
+	# Phase 1 (45%): liquid gathers mass — slight jelly overshoot as it swells.
+	_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_radius", val), 5.0, targets.radius, actual_duration * 0.45).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+
 	_tween.chain().set_parallel(true)
-	# Phase 2: Weight pulls it down.
+	# Phase 2 (55%): weight pulls it down; the anchor tail thins and lets go.
 	if s_type == 6:
-		_tween.tween_property(coin_rect, "position:y", -60.0, actual_duration * 0.5).from(-110.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
-		_tween.tween_method(func(val):
-			if icon_label and icon_label.visible:
-				icon_label.position.y = val - 28
-		, 25.0, final_y, actual_duration * 0.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		_tween.tween_property(coin_rect, "position:y", -60.0, actual_duration * 0.55).from(-110.0).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
 	else:
-		_tween.tween_method(func(val): 
-			fluid_rect.material.set_shader_parameter("drop_y", val)
-			if icon_label and icon_label.visible:
-				icon_label.position.y = val - 28
-		, 25.0, final_y, actual_duration * 0.5).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
-		
-		# Fade out the anchor during the final moments of Phase 2 so it detaches naturally
-		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.1).set_delay(actual_duration * 0.4)
-		
-		# Start falling EXACTLY as the tail detaches so it doesn't hang in the air!
-		_tween.tween_callback(func():
-			if state == DropState.FORMING:
-				state = DropState.FALLING
-				collision_shape.set_deferred("disabled", false)
-		).set_delay(actual_duration * 0.4)
-	
-	_tween.chain().tween_callback(func():
-		if state == DropState.FORMING:
-			state = DropState.FALLING
-			collision_shape.set_deferred("disabled", false)
-	)
+		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("drop_y", val), 25.0, targets.y, actual_duration * 0.55).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		# The tail detaches over the final stretch of the descent.
+		_tween.tween_method(func(val): fluid_rect.material.set_shader_parameter("anchor_multiplier", val), 1.0, 0.0, actual_duration * 0.22).set_delay(actual_duration * 0.33)
+
+	_tween.chain().tween_callback(_on_formation_finished)
+
+func _on_formation_finished() -> void:
+	if state != DropState.FORMING: return
+	state = DropState.FALLING
+	collision_shape.set_deferred("disabled", false)
+	release_boost = 1.0 # brief extra jiggle as the drop lets go of the ceiling
 
 func force_fall() -> void:
 	if _tween and _tween.is_valid():
 		_tween.kill()
 	state = DropState.FALLING
 	collision_shape.set_deferred("disabled", false)
-	
+
 	# Instantly snap visuals to their fully formed state
-	var size_m = theme_cache.get("size_mult", 1.0)
-	var final_radius = 32.0 * size_m
-	var final_y = 50.0
-	var s_type = theme_cache.get("shader_type", 0)
-	
-	if s_type == 1 or s_type == 2 or s_type == 6:
-		final_radius = 45.0 * size_m
-		final_y = 35.0
-	elif s_type == 0 or s_type == 3:
-		final_radius = 28.0 * size_m
-		final_y = 70.0
-		
-	fluid_rect.material.set_shader_parameter("drop_y", final_y)
-	fluid_rect.material.set_shader_parameter("drop_radius", final_radius)
+	var targets = _get_form_targets()
+	fluid_rect.material.set_shader_parameter("drop_y", targets.y)
+	fluid_rect.material.set_shader_parameter("drop_radius", targets.radius)
 	fluid_rect.material.set_shader_parameter("anchor_multiplier", 0.0)
 	coin_rect.position.y = -60.0
-	if icon_label and icon_label.visible:
-		icon_label.position.y = final_y - 28
 
 func on_pool_deactivate() -> void:
 	state = DropState.INACTIVE
@@ -346,8 +354,13 @@ func _process(delta: float) -> void:
 		else:
 			current_speed *= 0.1
 			
-	position.y += current_speed * multiplier * delta
-	
+	if is_bouncing:
+		# Slime bounce arc: integrate our own gravity, not the terminal fall speed.
+		bounce_vel_y += BOUNCE_GRAVITY * multiplier * delta
+		position.y += bounce_vel_y * multiplier * delta
+	else:
+		position.y += current_speed * multiplier * delta
+
 	if bounce_velocity_x != 0.0:
 		position.x += bounce_velocity_x * multiplier * delta
 		if position.x < 60.0:
@@ -357,6 +370,18 @@ func _process(delta: float) -> void:
 			position.x = 660.0
 			bounce_velocity_x = -abs(bounce_velocity_x)
 			
+	# --- New-mechanic per-frame behaviour ---
+	if type == DropType.CLOCKWORK:
+		clock_t += delta * multiplier
+		clock_flash = maxf(0.0, clock_flash - delta * 3.0)
+	elif type == DropType.PHANTOM:
+		phantom_t += delta * multiplier
+		var ghost: bool = fmod(phantom_t, 1.8) > 0.95
+		if ghost != is_ghost:
+			is_ghost = ghost
+			collision_shape.set_deferred("disabled", is_ghost)
+		modulate.a = lerpf(modulate.a, 0.26 if is_ghost else 1.0, delta * 9.0)
+
 	if is_glitching:
 		glitch_timer += delta * multiplier
 		if glitch_timer > next_glitch_target:
@@ -378,6 +403,11 @@ func _process(delta: float) -> void:
 	var wobble_amp = 0.04
 	if s_type == 2: wobble_amp = 0.12 # Slime wobbles a lot
 	elif s_type == 1: wobble_amp = 0.01 # Lava wobbles very little
+
+	# Fresh-release jiggle: the drop wobbles harder for a beat after letting go.
+	if release_boost > 0.0:
+		wobble_amp += 0.10 * release_boost
+		release_boost = maxf(0.0, release_boost - delta * 3.0)
 	
 	var time_sec = Time.get_ticks_msec() / 1000.0
 	var wobble_x = sin(time_sec * 15.0 + get_instance_id()) * wobble_amp
@@ -395,15 +425,15 @@ func _process(delta: float) -> void:
 		if s_type == 2 and bounce_count < 3:
 			bounce_count += 1
 			position.y = screen_bottom - 10.0
-			
-			var bounce_height = 0.0
-			if bounce_count == 1: bounce_height = 800.0
-			elif bounce_count == 2: bounce_height = 500.0
-			elif bounce_count == 3: bounce_height = 200.0
-			
-			var bounce_tween = create_tween()
-			bounce_tween.tween_property(self, "position:y", screen_bottom - bounce_height, 0.5).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-			bounce_tween.tween_property(self, "position:y", screen_bottom + 50.0, 0.4).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+
+			# Launch upward; BOUNCE_GRAVITY in _process brings it back down for the next bounce.
+			var bounce_speed = 0.0
+			if bounce_count == 1: bounce_speed = 2100.0
+			elif bounce_count == 2: bounce_speed = 1500.0
+			else: bounce_speed = 950.0
+
+			is_bouncing = true
+			bounce_vel_y = -bounce_speed
 			missed.emit(flood_damage * 0.1) # Small penalty for bouncing
 		else:
 			if is_pinata:
@@ -423,37 +453,48 @@ func _process(delta: float) -> void:
 						final_damage *= 0.1 # Tiny barely hurts (1.5 per drop)
 				missed.emit(final_damage)
 				
+			if gameplay_ref and gameplay_ref.has_method("_spawn_flood_splash"):
+				gameplay_ref._spawn_flood_splash(position.x, get_current_color())
 			if _pool:
 				_pool.return_drop(self)
 			else:
 				queue_free()
 
 func _input_event(_viewport: Viewport, event: InputEvent, _shape_idx: int) -> void:
-	if state != DropState.FALLING: return
+	# Tappable while still FORMING too, so fresh drops never feel unresponsive.
+	if state != DropState.FALLING and state != DropState.FORMING: return
 	if event is InputEventScreenTouch or event is InputEventMouseButton:
 		if event.is_pressed():
 			pop()
 
 func _update_shader_liquid_type() -> void:
-	var s_type = theme_cache.get("shader_type", 0) if theme_cache else 0
-	var is_midas_level = (s_type == 6)
-	
+	var theme_type = theme_cache.get("shader_type", 0) if theme_cache else 0
+	var is_midas_level = (theme_type == 6)
+	var s_type = theme_type
+	var tint := 0.0
+
 	if type == DropType.GOLD:
 		s_type = 6
-	elif type == DropType.BOMB:
-		s_type = 8
-	elif type == DropType.FREEZE:
-		s_type = 9
-	elif type == DropType.SHIELD:
-		s_type = 10
-	elif type == DropType.DRAIN:
-		s_type = 11
+	elif type == DropType.BOMB or type == DropType.FREEZE \
+			or type == DropType.SHIELD or type == DropType.DRAIN:
+		# Full parent look: the power-up IS the stage's liquid (slime jiggles,
+		# water refracts, lava cracks) — identified by a strong colour tint
+		# (water_color already carries the power-up colour) + its drawn symbol.
+		tint = 0.65
 	elif type == DropType.METEOR:
-		s_type = 2 # Slime thick
+		if not is_boss_drop:
+			s_type = 2 # Slime thick (boss titans keep their stage's own liquid)
+	elif type == DropType.SHIELDED and shield_hp > 0:
+		s_type = 9 # Frozen solid: glacial ice shell until it's cracked
 	elif type == DropType.ACID or type == DropType.NEUTRALIZER:
-		s_type = 3 # Acid thin
+		s_type = 3 # Hazard readability: never camouflaged as the parent liquid
 	elif type == DropType.RAINBOW:
-		s_type = 4 # Pearlescent
+		s_type = 4 # Emissive pearl: it's the light source in blackout events
+
+	# Theme silhouette: slime jiggle for everything except the rigid ice shell.
+	var slime_shape: bool = (theme_type == 2) and not (type == DropType.SHIELDED and shield_hp > 0)
+	fluid_rect.material.set_shader_parameter("is_slime_shape", slime_shape)
+	fluid_rect.material.set_shader_parameter("identity_tint", tint)
 		
 	if s_type == 6 or is_midas_level:
 		fluid_rect.hide()
@@ -463,17 +504,54 @@ func _update_shader_liquid_type() -> void:
 			coin_rect.material.set_shader_parameter("spin_speed", 12.0)
 		else:
 			coin_rect.material.set_shader_parameter("spin_speed", 5.0)
-	elif type == DropType.RAINBOW:
-		fluid_rect.hide()
-		coin_rect.hide()
 	else:
+		# Includes RAINBOW now → shows the pearlescent liquid body (liquid_type 4)
+		# instead of just floating drawn rings, so it reads as a liquid drop.
 		coin_rect.hide()
 		fluid_rect.show()
 		fluid_rect.material.set_shader_parameter("liquid_type", s_type)
 
+func _clock_ring_scale() -> float:
+	# The ring shrinks from 2.35x onto the drop (1.0x) each cycle.
+	var phase := fmod(clock_t, CLOCK_PERIOD) / CLOCK_PERIOD
+	return 2.35 - 1.35 * phase
+
+func _clock_in_window() -> bool:
+	return _clock_ring_scale() <= 1.28 # the final beat of the cycle
+
 func pop() -> void:
 	if state == DropState.POPPING or state == DropState.INACTIVE: return
-	
+
+	if type == DropType.PHANTOM and is_ghost:
+		return # ghosts can't be touched (collision is off; this is a safety net)
+
+	if type == DropType.SHIELDED and shield_hp > 0:
+		# First tap: the ICE SHELL cracks apart, thawing back to liquid.
+		shield_hp = 0
+		fall_velocity = minf(fall_velocity, fall_speed) * 0.5 # staggered, briefly easier
+		release_boost = 1.0
+		_update_shader_liquid_type() # glacial shell -> parent liquid again
+		if gameplay_ref and gameplay_ref.has_method("_spawn_shield_shards"):
+			gameplay_ref._spawn_shield_shards(global_position, Color(0.72, 0.9, 1.0))
+		AudioManager.play_sfx("pop", 1.6)
+		AudioManager.vibrate("pop")
+		queue_redraw()
+		return
+
+	if type == DropType.CLOCKWORK:
+		if not _clock_in_window():
+			# Mistimed: the tap is DEFLECTED — it bounces and gets angrier.
+			clock_bad_taps += 1
+			if clock_bad_taps < 3: # 3rd bad tap pops anyway (anti-frustration)
+				clock_flash = 1.0
+				fall_velocity = -260.0
+				fall_speed *= 1.08
+				AudioManager.play_sfx("button", 0.6)
+				AudioManager.vibrate("miss")
+				return
+		else:
+			perfect_pop = true
+
 	if is_pinata:
 		bounce_velocity_x *= 1.15
 		fall_velocity = -400.0 # Pop back up!
@@ -492,6 +570,8 @@ func pop() -> void:
 			gameplay_ref._spawn_particle(position, get_current_color())
 		AudioManager.play_sfx("pop")
 		AudioManager.vibrate("pop")
+		if is_boss_drop and gameplay_ref and gameplay_ref.has_method("_on_boss_titan_hit"):
+			gameplay_ref._on_boss_titan_hit(self)
 		if tap_health > 0:
 			return
 			
@@ -524,11 +604,16 @@ func pop() -> void:
 
 func pop_by_bomb() -> void:
 	if state == DropState.POPPING or state == DropState.INACTIVE: return
+	if is_boss_drop:
+		pop() # bosses take one tick of damage from AoE — never an instant kill
+		return
 	state = DropState.POPPING
 	collision_shape.set_deferred("disabled", true)
 	_play_pop_animation()
 
 func _play_pop_animation() -> void:
+	if gameplay_ref and gameplay_ref.has_method("_spawn_ripple"):
+		gameplay_ref._spawn_ripple(position, get_current_color(), 1.3)
 	if _tween and _tween.is_valid():
 		_tween.kill()
 	
@@ -543,6 +628,13 @@ func _play_pop_animation() -> void:
 	)
 
 func get_current_color() -> Color:
+	if is_boss_drop:
+		# Boss titans wear their stage's liquid, shimmering with menace.
+		var bt = Time.get_ticks_msec() / 350.0
+		var base: Color = theme_cache.get("drop_color", Color(0.35, 0.78, 0.98)) if theme_cache else Color(0.35, 0.78, 0.98)
+		return base.lerp(Color.WHITE, 0.18 + 0.14 * sin(bt))
+	if type == DropType.SHIELDED and shield_hp > 0:
+		return Color(0.72, 0.9, 1.0, 1.0) # frozen: pale glacial blue
 	match type:
 		DropType.NORMAL: 
 			var t = ThemeManager.get_equipped_theme()
@@ -572,26 +664,35 @@ func get_current_color() -> Color:
 	return Color(0.2, 0.6, 1.0, 1.0)
 
 func _draw() -> void:
-	if type == DropType.NORMAL or type == DropType.GOLD: return
+	if type == DropType.NORMAL or type == DropType.GOLD or type == DropType.RAINBOW: return
 	
 	# Do not draw the symbol until the drop detaches from the ceiling!
 	if state == DropState.FORMING: return
 	
-	var current_scale = visuals.scale.x
-	var size = drop_radius * 0.45 * current_scale
-	
-	var y_val = fluid_rect.material.get_shader_parameter("drop_y")
-	var visual_offset_y = 0.0
-	if y_val != null:
-		visual_offset_y = float(y_val) + visuals.position.y
-		
+	# Anchor the symbol to the ACTUAL rendered body centre and inherit the body's
+	# scale, so glyphs stay glued and squash/jiggle with the liquid (the old code
+	# ignored visuals.scale.y, so wobbling slime bodies drifted off their symbols).
+	var vscale: Vector2 = visuals.scale
+	var size = drop_radius * 0.45 # scale now lives in the transform below
+
+	var body_y_local := 50.0
+	if coin_rect and coin_rect.visible:
+		body_y_local = 0.0 # the coin body is centred at Visuals-local (0,0)
+	else:
+		var y_val = fluid_rect.material.get_shader_parameter("drop_y")
+		if y_val != null:
+			body_y_local = float(y_val)
+
 	var spin_scale_x = 1.0
 	if coin_rect and coin_rect.visible:
 		var spin_speed = coin_rect.material.get_shader_parameter("spin_speed")
 		var spin_time = Time.get_ticks_msec() / 1000.0 * spin_speed
 		spin_scale_x = max(abs(cos(spin_time)), 0.05)
-		
-	draw_set_transform(Vector2(0, visual_offset_y), 0.0, Vector2(spin_scale_x, 1.0))
+
+	draw_set_transform(
+		Vector2(0.0, visuals.position.y + vscale.y * body_y_local),
+		0.0,
+		Vector2(spin_scale_x * vscale.x, vscale.y))
 	
 	var base_col = Color(1.0, 1.0, 1.0, 1.0)
 	match type:
@@ -600,8 +701,14 @@ func _draw() -> void:
 		DropType.BOMB: base_col = Color(1.0, 0.4, 0.1, 1.0)
 		DropType.SHIELD: base_col = Color(0.9, 0.4, 1.0, 1.0)
 		DropType.ACID: base_col = Color(0.8, 1.0, 0.1, 1.0)
-		DropType.METEOR: base_col = Color(0.1, 0.8, 0.1, 1.0)
-		
+		DropType.METEOR: base_col = get_current_color().lightened(0.15) if is_boss_drop else Color(0.1, 0.8, 0.1, 1.0)
+		DropType.NEUTRALIZER: base_col = Color(0.3, 1.0, 0.9, 1.0)
+		DropType.SHIELDED:
+			if shield_hp <= 0: return # shield shattered -> plain liquid drop again
+			base_col = Color(0.45, 0.85, 1.0, 1.0)
+		DropType.CLOCKWORK: base_col = Color(1.0, 0.75, 0.25, 1.0)
+		DropType.PHANTOM: base_col = Color(0.72, 0.55, 1.0, 1.0)
+
 	var glow_col = base_col
 	
 	# Draw beautiful soft radial glow behind the symbol
@@ -616,20 +723,20 @@ func _draw() -> void:
 			base_col = Color(0.2, 1.0, 0.2, 1.0)
 			for w in [8.0, 4.0]:
 				var c = Color(0.1, 0.8, 0.1, 0.4) if w == 8.0 else base_col
-				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), c, w * current_scale)
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w)
+				draw_line(Vector2(-size*0.7, size*0.3), Vector2(0, size), c, w)
+				draw_line(Vector2(size*0.7, size*0.3), Vector2(0, size), c, w)
 		DropType.FREEZE:
 			base_col = Color(0.5, 0.9, 1.0, 1.0)
 			for w in [7.0, 3.0]:
 				var c = Color(0.2, 0.6, 1.0, 0.4) if w == 7.0 else base_col
-				draw_line(Vector2(0, -size), Vector2(0, size), c, w * current_scale)
-				draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), c, w * current_scale)
-				draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), c, w * current_scale)
+				draw_line(Vector2(0, -size), Vector2(0, size), c, w)
+				draw_line(Vector2(-size*0.86, -size*0.5), Vector2(size*0.86, size*0.5), c, w)
+				draw_line(Vector2(-size*0.86, size*0.5), Vector2(size*0.86, -size*0.5), c, w)
 		DropType.BOMB:
 			base_col = Color(1.0, 0.4, 0.1, 1.0)
 			draw_circle(Vector2.ZERO, size * 0.5, base_col)
-			draw_line(Vector2(0, -size*0.5), Vector2(size*0.8, -size*1.2), Color(0.1, 0.1, 0.1, 1.0), 4.0 * current_scale)
+			draw_line(Vector2(0, -size*0.5), Vector2(size*0.8, -size*1.2), Color(0.1, 0.1, 0.1, 1.0), 4.0)
 			draw_circle(Vector2(size*0.8, -size*1.2), size*0.3, Color(1.0, 0.8, 0.2, 1.0)) # Spark
 		DropType.SHIELD:
 			base_col = Color(0.9, 0.4, 1.0, 1.0)
@@ -638,22 +745,81 @@ func _draw() -> void:
 				Vector2(size, size*0.2), Vector2(0, size*0.9), Vector2(-size, size*0.2)
 			])
 			draw_polygon(points, [base_col, base_col, base_col, base_col, base_col])
-		DropType.RAINBOW:
-			var time_sec = Time.get_ticks_msec() / 1000.0
-			base_col = Color.from_hsv(fmod(time_sec, 1.0), 1.0, 1.0)
-			for w in [8.0, 4.0]:
-				var alpha = 0.3 if w == 8.0 else 1.0
-				draw_arc(Vector2(0, size*0.3), size, 0, PI*2, 24, Color.from_hsv(fmod(time_sec, 1.0), 1.0, 1.0, alpha), w * current_scale)
-				draw_arc(Vector2(0, size*0.3), size*0.7, 0, PI*2, 24, Color.from_hsv(fmod(time_sec + 0.33, 1.0), 1.0, 1.0, alpha), w * current_scale)
-				draw_arc(Vector2(0, size*0.3), size*0.4, 0, PI*2, 24, Color.from_hsv(fmod(time_sec + 0.66, 1.0), 1.0, 1.0, alpha), w * current_scale)
+		# (RAINBOW glyphs removed: _draw returns early for RAINBOW — dead branch)
 		DropType.ACID:
 			base_col = Color(0.8, 1.0, 0.1, 1.0)
 			# Draw a skull or toxic symbol. For simplicity, an X
 			for w in [6.0, 3.0]:
 				var c = Color(0.5, 0.8, 0.0, 0.4) if w == 6.0 else base_col
-				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w * current_scale)
-				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w * current_scale)
+				draw_line(Vector2(-size*0.6, -size*0.6), Vector2(size*0.6, size*0.6), c, w)
+				draw_line(Vector2(size*0.6, -size*0.6), Vector2(-size*0.6, size*0.6), c, w)
+		DropType.NEUTRALIZER:
+			base_col = Color(0.3, 1.0, 0.9, 1.0)
+			for w in [7.0, 3.0]:
+				var c = Color(0.0, 0.7, 0.6, 0.45) if w == 7.0 else base_col
+				draw_line(Vector2(0, -size*0.85), Vector2(0, size*0.85), c, w)
+				draw_line(Vector2(-size*0.85, 0), Vector2(size*0.85, 0), c, w)
 		DropType.METEOR:
-			base_col = Color(0.2, 0.9, 0.2, 1.0)
-			# Draw a rock-like texture/lines
-			draw_arc(Vector2.ZERO, size*0.8, 0, PI*2, 12, base_col, 3.0 * current_scale)
+			if is_boss_drop:
+				# Boss titan: imposing pulsing double ring in the stage's colour
+				var bt = Time.get_ticks_msec() / 1000.0
+				var bc = get_current_color()
+				var bp = 0.5 + 0.5 * sin(bt * 4.0)
+				draw_arc(Vector2.ZERO, size * 0.95, 0, TAU, 32, Color(bc.r, bc.g, bc.b, 0.5 + 0.3 * bp), 4.0)
+				draw_arc(Vector2.ZERO, size * 1.25, bt * 1.2, bt * 1.2 + 4.4, 24, Color(1, 1, 1, 0.35), 2.5)
+			else:
+				# Damage cracks spread across the giant as it takes hits.
+				# (Replaces a 12-segment arc that read as a weird floating
+				# polygon ring above the sagging slime body.)
+				var start_hp := 5 if meteor_generation == 0 else (2 if meteor_generation == 1 else 1)
+				var hits: int = clampi(start_hp - tap_health, 0, 6)
+				var seed_base: int = int(get_instance_id() % 97)
+				for i in range(hits):
+					var ca := float(seed_base + i * 37) * 0.61
+					var dirv := Vector2(cos(ca), sin(ca))
+					var side := 1.0 if i % 2 == 0 else -1.0
+					var pts := PackedVector2Array([
+						dirv * size * 0.12,
+						dirv * size * 0.55 + dirv.orthogonal() * size * 0.20 * side,
+						dirv * size * 0.95,
+					])
+					draw_polyline(pts, Color(0.04, 0.3, 0.04, 0.9), 3.5)
+					draw_polyline(pts, Color(0.8, 1.0, 0.6, 0.5), 1.5)
+		DropType.SHIELDED:
+			# Hexagonal ICE shell — slow crystal rotation, frost sparkle
+			var sh_t = Time.get_ticks_msec() / 1000.0
+			var sh_r = size * 1.6
+			var sh_pts := PackedVector2Array()
+			for i in range(7):
+				var a = sh_t * 0.6 + TAU * float(i) / 6.0
+				sh_pts.append(Vector2(cos(a), sin(a)) * sh_r)
+			draw_polyline(sh_pts, Color(0.75, 0.92, 1.0, 0.30), 9.0)
+			draw_polyline(sh_pts, Color(0.85, 0.96, 1.0, 0.95), 3.2)
+			# Frost spokes to the crystal corners
+			for i in range(6):
+				var fa = sh_t * 0.6 + TAU * float(i) / 6.0
+				var fd = Vector2(cos(fa), sin(fa))
+				draw_line(fd * sh_r * 0.55, fd * sh_r * 0.92, Color(0.85, 0.96, 1.0, 0.35), 2.0)
+			draw_arc(Vector2.ZERO, sh_r * 1.14, sh_t * 2.2, sh_t * 2.2 + 1.1, 12, Color(1, 1, 1, 0.45), 2.0)
+		DropType.CLOCKWORK:
+			# The rhythm ring: shrinks onto the drop; gold-white = tap NOW
+			var cw_rs = _clock_ring_scale()
+			var cw_r = size * 2.0 * cw_rs
+			var in_win = _clock_in_window()
+			var cw_c = Color(1.0, 0.85, 0.3, 0.95) if in_win else Color(1.0, 0.55, 0.15, 0.65)
+			if clock_flash > 0.0:
+				cw_c = cw_c.lerp(Color(1.0, 0.2, 0.15, 1.0), clock_flash)
+			draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, cw_c, (5.0 if in_win else 3.0))
+			if in_win:
+				draw_arc(Vector2.ZERO, cw_r, 0, TAU, 40, Color(1, 1, 1, 0.55), 1.8)
+			# Target notches at the sweet radius
+			for i in range(4):
+				var na = TAU * float(i) / 4.0 + PI / 4.0
+				var nd = Vector2(cos(na), sin(na))
+				draw_line(nd * size * 1.85, nd * size * 2.12, Color(1.0, 0.85, 0.4, 0.75), 2.4)
+		DropType.PHANTOM:
+			# Spectral orbit dashes — the tell that it phases
+			var ph_t = Time.get_ticks_msec() / 1000.0
+			for i in range(8):
+				var pa = ph_t * 1.5 + TAU * float(i) / 8.0
+				draw_arc(Vector2.ZERO, size * 1.5, pa, pa + 0.34, 6, Color(0.75, 0.6, 1.0, 0.65), 2.4)

@@ -22,6 +22,7 @@ SaveManager="*res://scripts/autoloads/SaveManager.gd"
 GameManager="*res://scripts/autoloads/GameManager.gd"
 AudioManager="*res://scripts/autoloads/AudioManager.gd"
 ThemeManager="*res://scripts/autoloads/ThemeManager.gd"
+ChallengeManager="*res://scripts/autoloads/ChallengeManager.gd"
 BackgroundManager="*res://scenes/autoloads/BackgroundManager.tscn"
 
 [display]
@@ -42,4 +43,3 @@ pointing/emulate_touch_from_mouse=true
 
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
-BackgroundManager="*res://scenes/autoloads/BackgroundManager.tscn"

@@ -1,5 +1,7 @@
 extends Control
 
+const UIKit = preload("res://scripts/ui/UIKit.gd")
+
 const UPGRADES = {
 	"freeze_duration": {"name": "Freeze Duration", "desc": "Increases freeze time.", "base_cost": 100, "cost_mult": 1.5, "max_level": 5},
 	"bomb_radius": {"name": "Bomb Radius", "desc": "Increases explosion size.", "base_cost": 100, "cost_mult": 1.5, "max_level": 5},
@@ -84,7 +86,9 @@ func _ready() -> void:
 	_refresh_ui()
 
 func _refresh_ui() -> void:
-	droplets_label.text = "Droplets: %d" % ThemeManager.get_droplets()
+	droplets_label.text = "DROPLETS  %d" % ThemeManager.get_droplets()
+	droplets_label.add_theme_font_override("font", UIKit.font_ui_semibold(1))
+	droplets_label.add_theme_color_override("font_color", UIKit.COL_DROPLET.lightened(0.25))
 	
 	for c in list_container.get_children():
 		c.queue_free()
@@ -117,19 +121,16 @@ func _refresh_ui() -> void:
 			var is_owned = (key in owned)
 			grid.add_child(_create_passive_item(key, info, is_unlocked, is_owned))
 
+	UIKit.animate_in(list_container.get_children(), 0.05)
+
 func _create_upgrade_item(u_id: String, info: Dictionary, level: int) -> Control:
-	var panel = PanelContainer.new()
+	# Liquid vessel row — fill rises with the upgrade level.
+	var fill := 0.05 + 0.28 * (float(level - 1) / maxf(1.0, float(info.max_level - 1)))
+	var panel := UIKit.LiquidPanel.new(Color(0.35, 0.75, 1.0), fill, 22.0, 14)
 	panel.custom_minimum_size = Vector2(0, 120)
-	
-	var margin = MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 20)
-	margin.add_theme_constant_override("margin_right", 20)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_bottom", 10)
-	panel.add_child(margin)
-	
+
 	var hbox = HBoxContainer.new()
-	margin.add_child(hbox)
+	panel.content.add_child(hbox)
 	
 	var vbox_text = VBoxContainer.new()
 	vbox_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -185,18 +186,13 @@ func _create_upgrade_item(u_id: String, info: Dictionary, level: int) -> Control
 	return panel
 
 func _create_ability_item(a_id: String, info: Dictionary, is_unlocked: bool, is_equipped: bool) -> Control:
-	var panel = PanelContainer.new()
+	# Liquid vessel row — the equipped ability's vessel runs full teal.
+	var accent := UIKit.TEAL if is_equipped else Color(0.35, 0.75, 1.0)
+	var panel := UIKit.LiquidPanel.new(accent, 0.2 if is_equipped else 0.06, 22.0, 14)
 	panel.custom_minimum_size = Vector2(0, 140)
-	
-	var margin = MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 20)
-	margin.add_theme_constant_override("margin_right", 20)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_bottom", 10)
-	panel.add_child(margin)
-	
+
 	var hbox = HBoxContainer.new()
-	margin.add_child(hbox)
+	panel.content.add_child(hbox)
 	
 	var preview = TextureRect.new()
 	preview.custom_minimum_size = Vector2(100, 100)
